@@ -72,7 +72,10 @@
         </div>
       </div>
       <div class="mt-3">
-        <van-button type="primary" round block size="small" @click="analyze">🔍 分析操作建议</van-button>
+        <div class="grid grid-cols-2 gap-2">
+          <van-button type="default" round block size="small" :loading="fundUpdating" @click="updateFundData">💾 更新基金数据</van-button>
+          <van-button type="primary" round block size="small" @click="analyze">🔍 分析操作建议</van-button>
+        </div>
       </div>
     </div>
   </div>
@@ -94,6 +97,7 @@ const selectedFundId = ref('')
 const todayChange = ref(null)
 const totalReturn = ref(null)
 const autoFilled = ref(false)
+const fundUpdating = ref(false)
 
 // ==================== AI 智能录入 ====================
 const aiInput = ref('')
@@ -202,6 +206,35 @@ watch(selectedFundId, () => {
     totalReturn.value = null
   }
 })
+
+async function updateFundData() {
+  if (!selectedFundId.value) { showTip('请选择一只基金'); return }
+  if (todayChange.value == null || isNaN(todayChange.value)) { showTip('请输入今日涨跌幅'); return }
+  if (totalReturn.value == null || isNaN(totalReturn.value)) { showTip('请输入当前总收益率'); return }
+  const fund = selectedFund.value
+  if (!fund) { showTip('基金数据异常'); return }
+
+  // 根据今日涨跌幅计算最新市值
+  const newMarketValue = Math.round(fund.currentMarketValue * (1 + todayChange.value / 100) * 100) / 100
+
+  fundUpdating.value = true
+  try {
+    await store.updateFund(fund.id, {
+      name: fund.name,
+      initialPrincipal: fund.initialPrincipal,
+      buyDate: fund.buyDate,
+      totalBuyAmount: fund.totalBuyAmount,
+      totalSellAmount: fund.totalSellAmount,
+      currentMarketValue: newMarketValue,
+      currentReturnRate: totalReturn.value
+    })
+    showTip('✅ 基金数据已更新')
+  } catch (e) {
+    showTip('更新失败: ' + (e.message || '未知错误'))
+  } finally {
+    fundUpdating.value = false
+  }
+}
 
 function analyze() {
   if (!selectedFundId.value) { showTip('请选择一只基金'); return }
