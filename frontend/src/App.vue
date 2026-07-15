@@ -35,9 +35,9 @@
         </div>
         <!-- 右列 -->
         <div class="lg:col-span-1 space-y-4 order-2 lg:order-3">
+          <ManualTrade />
           <PositionOverview />
           <HealthScore />
-          <ManualTrade />
         </div>
       </div>
 

@@ -149,3 +149,94 @@ def generate_emotion(
             "title": "😅 AI 暂时不在线",
             "lines": ["AI 情绪生成服务暂时不可用，稍后再试"],
         }
+
+
+# ==================== 每日数据智能解析 ====================
+
+DAILY_PARSE_PROMPT = """你是一个数据解析助手。用户会用自然语言描述今日基金的涨跌情况。
+你需要从用户消息中提取出对应的基金和涨跌幅数据。
+
+**重要规则：**
+1. 只解析"用户基金列表"中明确存在的基金（通过名称模糊匹配）
+2. 如果用户提到某个基金名称但未给出涨跌幅，则不对该基金输出
+3. 如果用户说"全部""所有"等泛指，则为列表中的每只基金都输出
+4. todayChange 是涨跌幅百分比，正数表示上涨，负数表示下跌
+5. 只返回纯 JSON 数组，不要包含任何 markdown 标记或额外文字"""
+
+
+def parse_daily_data(
+    user_message: str,
+    funds: List[dict],
+) -> List[dict]:
+    """
+    智能解析用户每日收益的自然语言描述
+
+    Args:
+        user_message: 用户自然语言消息，如 "今天白酒涨了2%，医疗跌了1.5%"
+        funds: 基金列表 [{"id": "xxx", "name": "白酒", "currentReturnRate": 10.5}, ...]
+
+    Returns:
+        [{"fundId": "xxx", "fundName": "白酒", "todayChange": 2.0}, ...]
+    """
+    try:
+        client = _get_client()
+
+        # 构建基金列表文本
+        fund_lines = []
+        for f in funds:
+            fund_lines.append(
+                f"- ID: {f['id']}, 名称: {f['name']}, 当前收益率: {f.get('currentReturnRate', 0):.2f}%"
+            )
+        fund_list_text = "\n".join(fund_lines)
+
+        system_content = DAILY_PARSE_PROMPT
+        user_content = (
+            f"用户基金列表：\n{fund_list_text}\n\n"
+            f"用户消息：{user_message}\n\n"
+            f'请返回 JSON 数组，格式：[{{"fundId":"基金ID","fundName":"基金名称","todayChange":涨跌幅百分比}}]'
+        )
+
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_content},
+        ]
+
+        response = client.chat.completions.create(
+            model=settings.LLM_MODEL,
+            messages=messages,
+        )
+        text = response.choices[0].message.content.strip()
+
+        # 提取 JSON 数组
+        # 处理 AI 可能返回 ```json ... ``` 包裹的情况
+        if "```" in text:
+            # 提取代码块内容
+            start = text.find("[")
+            end = text.rfind("]")
+            if start != -1 and end != -1:
+                text = text[start:end + 1]
+
+        parsed = json.loads(text)
+        if not isinstance(parsed, list):
+            logger.warning("AI 返回的不是数组: %s", text)
+            return []
+
+        # 为每个结果补齐 fundName（通过 fundId 从 funds 列表中查找）
+        fund_map = {f["id"]: f.get("currentReturnRate", 0) for f in funds}
+        for item in parsed:
+            fid = item.get("fundId", "")
+            if fid in fund_map:
+                item["totalReturn"] = round(fund_map[fid], 2)
+            else:
+                item["totalReturn"] = 0
+
+        return parsed
+
+    except RuntimeError:
+        raise
+    except json.JSONDecodeError as e:
+        logger.error("解析 AI 返回的 JSON 失败: %s, 原文: %s", e, text if "text" in dir() else "N/A")
+        return []
+    except Exception as e:
+        logger.error("每日数据解析失败: %s", e)
+        raise RuntimeError(f"AI 解析服务异常: {e}")

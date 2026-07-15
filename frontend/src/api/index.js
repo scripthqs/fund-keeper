@@ -64,4 +64,7 @@ export const api = {
   // 快照
   getSnapshots: (fundId) => http.get('/snapshots/' + fundId),
   saveSnapshot: (data) => http.post('/snapshots', data),
+
+  // 每日数据智能解析
+  parseDaily: (message, funds) => http.post('/parse-daily', { message, funds }),
 }

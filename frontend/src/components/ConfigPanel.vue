@@ -1,11 +1,13 @@
 <template>
   <div class="card">
-    <div class="flex items-center justify-between p-4 cursor-pointer" @click="collapsed = !collapsed">
-      <h2 class="font-semibold text-base flex items-center gap-2">
-        <span>⚙️</span> 投资规则配置
-        <span class="text-xs font-normal ml-2" style="color:var(--text-secondary)">{{ summary }}</span>
-      </h2>
-      <span class="transition-transform duration-300 text-sm" :style="{ transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)', color: 'var(--text-secondary)' }">▼</span>
+    <div class="flex items-center justify-between p-4 cursor-pointer gap-2" @click="collapsed = !collapsed">
+      <div class="flex-1" style="min-width:0;">
+        <h2 class="font-semibold text-base flex items-center gap-2">
+          <span>⚙️</span> 投资规则配置
+        </h2>
+        <div class="text-xs font-normal" style="color:var(--text-secondary); margin-top:0.125rem;">{{ summary }}</div>
+      </div>
+      <span class="transition-transform duration-300 text-sm" :style="{ transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)', color: 'var(--text-secondary)' }" style="flex-shrink:0;">▼</span>
     </div>
     <div v-show="!collapsed" class="px-4 pb-4">
       <div class="strategy-tabs">

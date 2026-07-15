@@ -122,6 +122,25 @@ class SnapshotOut(SnapshotCreate):
     date: str
 
 
+# ==================== 每日数据智能解析 ====================
+
+class DailyParseRequest(BaseModel):
+    message: str
+    funds: List[dict] = Field(default_factory=list)
+
+
+class DailyParseResult(BaseModel):
+    fundId: str = ""
+    fundName: str = ""
+    todayChange: float = 0
+    totalReturn: float = 0
+
+
+class DailyParseResponse(BaseModel):
+    results: List[DailyParseResult] = Field(default_factory=list)
+    message: str = ""
+
+
 # ==================== 执行操作 ====================
 
 class ExecuteActionRequest(BaseModel):

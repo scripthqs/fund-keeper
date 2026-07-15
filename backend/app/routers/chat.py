@@ -5,13 +5,16 @@ from typing import List
 
 from fastapi import APIRouter, HTTPException
 
-from app.agent import chat_with_advisor, generate_emotion
+from app.agent import chat_with_advisor, generate_emotion, parse_daily_data
 from app.config import settings
 from app.database import get_db, gen_id, now_str
 from app.models import (
     ChatMessage,
     ChatRequest,
     ChatResponse,
+    DailyParseRequest,
+    DailyParseResponse,
+    DailyParseResult,
     EmotionRequest,
     EmotionResponse,
 )
@@ -86,6 +89,33 @@ async def chat(req: ChatRequest):
     conn.close()
 
     return ChatResponse(reply=reply)
+
+
+# ==================== 每日数据智能解析 ====================
+
+@router.post("/parse-daily", response_model=DailyParseResponse)
+async def parse_daily(req: DailyParseRequest):
+    """AI 智能解析用户每日收益描述，返回结构化的基金涨跌数据"""
+    if not settings.llm_configured:
+        raise HTTPException(
+            status_code=503,
+            detail="服务端未配置 LLM API Key，请在 .env 文件中设置 LLM_API_KEY",
+        )
+
+    try:
+        results = parse_daily_data(
+            user_message=req.message,
+            funds=req.funds,
+        )
+        return DailyParseResponse(
+            results=[DailyParseResult(**r) for r in results],
+            message=f"已识别 {len(results)} 只基金的涨跌数据"
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error("每日数据解析失败: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ==================== 情绪文案 ====================
