@@ -22,7 +22,7 @@
                 <td class="py-2 px-2">{{ h.date }}</td><td class="py-2 px-2">{{ h.fundName }}</td>
                 <td class="py-2 px-2"><van-tag :type="h.type === '买入' ? 'success' : 'danger'" round size="small">{{ h.type }}</van-tag></td>
                 <td class="py-2 px-2 text-right font-medium">¥{{ fmtNum(h.amount) }}</td>
-                <td class="py-2 px-2 text-right" :class="(h.returnRate || 0) >= 0 ? 'text-green-600' : 'text-red-600'">{{ fmtSigned(h.returnRate) }}%</td>
+                <td class="py-2 px-2 text-right" :class="(h.returnRate || 0) >= 0 ? 'text-red-600' : 'text-green-600'">{{ fmtSigned(h.returnRate) }}%</td>
                 <td class="py-2 px-2 text-xs" style="color:var(--text-secondary)">{{ h.note || '-' }}</td>
               </tr>
             </tbody>
@@ -37,7 +37,7 @@
             </div>
             <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs" style="color:var(--text-secondary)">
               <span>📅 {{ h.date }}</span><span>💵 ¥{{ fmtNum(h.amount) }}</span>
-              <span :style="{ color: (h.returnRate || 0) >= 0 ? '#16a34a' : '#dc2626', fontWeight: 600 }">📊 {{ fmtSigned(h.returnRate) }}%</span>
+              <span :style="{ color: (h.returnRate || 0) >= 0 ? '#dc2626' : '#16a34a', fontWeight: 600 }">📊 {{ fmtSigned(h.returnRate) }}%</span>
               <span>{{ h.note || '-' }}</span>
             </div>
           </div>

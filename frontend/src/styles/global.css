@@ -197,17 +197,17 @@ body {
 /* 预警卡片 */
 .warning-card { border-radius:10px; padding:1rem 1.125rem; position:relative; overflow:hidden; }
 .warning-card::before { content:''; position:absolute; left:0; top:0; bottom:0; width:4px; border-radius:2px; }
-.warning-low { background:#f0fdf4; border:1px solid #bbf7d0; }
-.warning-low::before { background:#22c55e; }
-.warning-mid { background:#fffbeb; border:1px solid #fde68a; }
-.warning-mid::before { background:#f59e0b; }
-.warning-high { background:#fef2f2; border:1px solid #fecaca; }
-.warning-high::before { background:#ef4444; }
+.warning-low { background:#eff6ff; border:1px solid #bfdbfe; }
+.warning-low::before { background:#3b82f6; }
+.warning-mid { background:#fff7ed; border:1px solid #fdba74; }
+.warning-mid::before { background:#f97316; }
+.warning-high { background:#fff7ed; border:1px solid #fb923c; }
+.warning-high::before { background:#ea580c; }
 .warning-recover { background:#eff6ff; border:1px solid #bfdbfe; }
 .warning-recover::before { background:#3b82f6; }
-.dark .warning-low { background:#052e16; border-color:#14532d; }
-.dark .warning-mid { background:#422006; border-color:#78350f; }
-.dark .warning-high { background:#450a0a; border-color:#7f1d1d; }
+.dark .warning-low { background:#172554; border-color:#1e3a8a; }
+.dark .warning-mid { background:#431407; border-color:#c2410c; }
+.dark .warning-high { background:#431407; border-color:#ea580c; }
 .dark .warning-recover { background:#172554; border-color:#1e3a5f; }
 
 /* 压力测试 */
@@ -252,12 +252,12 @@ body {
   display:inline-flex; align-items:center; justify-content:center;
   width:60px; height:60px; border-radius:50%; font-size:1.5rem; font-weight:700;
 }
-.score-green { background:#dcfce7; color:#16a34a; }
+.score-blue { background:#dbeafe; color:#2563eb; }
 .score-yellow { background:#fef3c7; color:#d97706; }
-.score-red { background:#fee2e2; color:#dc2626; }
-.dark .score-green { background:#14532d; }
+.score-slate { background:#e2e8f0; color:#475569; }
+.dark .score-blue { background:#1e3a8a; }
 .dark .score-yellow { background:#78350f; }
-.dark .score-red { background:#7f1d1d; }
+.dark .score-slate { background:#334155; color:#cbd5e1; }
 
 /* 规划结果 */
 .plan-result-card {
@@ -307,10 +307,10 @@ body {
   white-space: nowrap;
   animation: pulse-badge 2s infinite;
 }
-.badge-trading { background: #dcfce7; color: #16a34a; border: 1px solid #86efac; }
-.badge-closed { background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; }
-.dark .badge-trading { background: #14532d; color: #4ade80; border-color: #22c55e; }
-.dark .badge-closed { background: #7f1d1d; color: #fca5a5; border-color: #ef4444; }
+.badge-trading { background: #dbeafe; color: #2563eb; border: 1px solid #93c5fd; }
+.badge-closed { background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; }
+.dark .badge-trading { background: #1e3a8a; color: #bfdbfe; border-color: #3b82f6; }
+.dark .badge-closed { background: #334155; color: #cbd5e1; border-color: #64748b; }
 
 @keyframes pulse-badge { 0%,100% { opacity: 1; } 50% { opacity: 0.75; } }
 

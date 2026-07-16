@@ -29,7 +29,7 @@
       <div v-if="selectedFund" class="text-xs p-2 rounded-lg mb-3" style="background:var(--bg-primary)">
         <div class="grid grid-cols-2 gap-x-4 gap-y-1">
           <span>💰 市值：<strong>¥{{ fmtNum(selectedFund.currentMarketValue) }}</strong></span>
-          <span>📊 收益率：<strong :class="selectedFund.currentReturnRate >= 0 ? 'text-green-600' : 'text-red-600'">{{ fmtSigned(selectedFund.currentReturnRate) }}%</strong></span>
+          <span>📊 收益率：<strong :class="selectedFund.currentReturnRate >= 0 ? 'text-red-600' : 'text-green-600'">{{ fmtSigned(selectedFund.currentReturnRate) }}%</strong></span>
           <span>📈 累计买入：<strong>¥{{ fmtNum(selectedFund.totalBuyAmount) }}</strong></span>
           <span>📉 累计卖出：<strong>¥{{ fmtNum(selectedFund.totalSellAmount) }}</strong></span>
         </div>

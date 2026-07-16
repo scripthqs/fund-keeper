@@ -29,20 +29,20 @@
             <tr><td style="color:var(--text-secondary)">今日浮盈金额</td><td>¥{{ fmtNum(profit.todayProfit) }}</td></tr>
             <tr><td style="color:var(--text-secondary)">安全垫（可抵御跌幅）</td><td>{{ safeCushion }}%</td></tr>
             <tr><td style="color:var(--text-secondary)">盈亏归零所需明日跌幅</td><td>{{ breakDrop }}%</td></tr>
-            <tr v-if="data.warning.isRecover"><td style="color:var(--text-secondary)">回本所需涨幅</td><td style="color:#dc2626">{{ recoveryDisplay }}%</td></tr>
-            <tr v-if="data.warning.stopPrice"><td style="color:var(--text-secondary)">建议止盈挂单价</td><td style="color:#16a34a">¥{{ fmtNum(data.warning.stopPrice) }}</td></tr>
+            <tr v-if="data.warning.isRecover"><td style="color:var(--text-secondary)">回本所需涨幅</td><td style="color:#3b82f6">{{ recoveryDisplay }}%</td></tr>
+            <tr v-if="data.warning.stopPrice"><td style="color:var(--text-secondary)">建议止盈挂单价</td><td style="color:#3b82f6">¥{{ fmtNum(data.warning.stopPrice) }}</td></tr>
           </tbody>
         </table>
         <!-- 压力测试 -->
         <div class="rounded-lg p-3" style="background:var(--bg-primary)">
           <div class="flex items-center justify-between mb-2">
             <span class="text-xs font-medium">🧪 压力测试：模拟明日跌幅</span>
-            <span class="text-xs font-bold" style="color:#3b82f6">{{ stressDrop.toFixed(1) }}%</span>
+            <span class="text-xs font-bold" style="color:#64748b">{{ stressDrop.toFixed(1) }}%</span>
           </div>
-          <van-slider v-model="stressDrop" :min="-15" :max="0" :step="0.1" active-color="#ef4444" inactive-color="#e2e8f0" />
+          <van-slider v-model="stressDrop" :min="-15" :max="0" :step="0.1" active-color="#f97316" inactive-color="#e2e8f0" />
           <div class="text-xs" style="line-height:1.6;color:var(--text-secondary)">
             模拟市值：<strong>¥{{ fmtNum(stress.simMarketValue) }}</strong>（蒸发 ¥{{ fmtNum(stress.simLoss) }}）
-            | 模拟收益率：<strong :style="stress.simReturnRate >= 0 ? 'color:#16a34a' : 'color:#dc2626'">{{ fmtSigned(stress.simReturnRate) }}%</strong><br>
+            | 模拟收益率：<strong :style="stress.simReturnRate >= 0 ? 'color:#dc2626' : 'color:#16a34a'">{{ fmtSigned(stress.simReturnRate) }}%</strong><br>
             📌 {{ stress.recoveryText }}
           </div>
         </div>

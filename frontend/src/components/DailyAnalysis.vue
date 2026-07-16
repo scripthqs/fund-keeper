@@ -24,7 +24,7 @@
         <van-cell title="💰 市值" :value="'¥' + fmtNum(selectedFund.currentMarketValue)" />
         <van-cell title="📊 收益率">
           <template #value>
-            <span :class="selectedFund.currentReturnRate >= 0 ? 'text-green-600' : 'text-red-600'">{{ fmtSigned(selectedFund.currentReturnRate) }}%</span>
+            <span :class="selectedFund.currentReturnRate >= 0 ? 'text-red-600' : 'text-green-600'">{{ fmtSigned(selectedFund.currentReturnRate) }}%</span>
           </template>
         </van-cell>
         <van-cell title="📅 持有" :value="(daysBetween(selectedFund.buyDate) || '--') + ' 天'" />
@@ -35,11 +35,11 @@
       <div v-if="selectedFund && todayChange != null && !isNaN(todayChange)" class="grid grid-cols-2 gap-3 mb-3 text-xs">
         <div class="p-2 rounded-lg text-center" style="background:var(--bg-primary)">
           <div style="color:var(--text-secondary)">📈 今日收益</div>
-          <div class="text-base font-bold mt-0.5" :class="todayProfit >= 0 ? 'text-green-600' : 'text-red-600'">{{ fmtSigned(todayProfit) }} 元</div>
+          <div class="text-base font-bold mt-0.5" :class="todayProfit >= 0 ? 'text-red-600' : 'text-green-600'">{{ fmtSigned(todayProfit) }} 元</div>
         </div>
         <div class="p-2 rounded-lg text-center" style="background:var(--bg-primary)">
           <div style="color:var(--text-secondary)">📊 总收益率</div>
-          <div class="text-base font-bold mt-0.5" :class="totalReturn >= 0 ? 'text-green-600' : 'text-red-600'">{{ fmtSigned(totalReturn) }}%</div>
+          <div class="text-base font-bold mt-0.5" :class="totalReturn >= 0 ? 'text-red-600' : 'text-green-600'">{{ fmtSigned(totalReturn) }}%</div>
         </div>
       </div>
 

@@ -125,11 +125,11 @@ export function evaluateWarning(fund, todayChange, totalReturn, config, snapshot
   }
   if (todayChange <= 0) return { level: 'none', icon: '', title: '', message: '今日无浮盈，安全垫失效，关注明日走势。', warnClass: 'warning-low' }
   const safeStr = safetyCushion > 0 ? safetyCushion.toFixed(2) : '0.00'
-  if (safetyCushion > 5) return { level: 'low', icon: '🟢', title: '低风险', message: `今日利润可抵御明日 ${safeStr}% 的下跌，安全垫充足。`, warnClass: 'warning-low', safetyCushion, breakEvenDrop: safetyCushion }
-  if (safetyCushion > 1) { const sp = (fund.currentMarketValue * (1 - safetyCushion / 100)).toFixed(2); return { level: 'mid', icon: '🟡', title: '中风险', message: `⚠️ 明日只要跌 ${safeStr}%，今日利润将全部归零。建议设置止盈线在 ¥${fmtNum(sp)}。`, warnClass: 'warning-mid', safetyCushion, breakEvenDrop: safetyCushion, stopPrice: sp } }
+  if (safetyCushion > 5) return { level: 'low', icon: '🔵', title: '低风险', message: `今日利润可抵御明日 ${safeStr}% 的下跌，安全垫充足。`, warnClass: 'warning-low', safetyCushion, breakEvenDrop: safetyCushion }
+  if (safetyCushion > 1) { const sp = (fund.currentMarketValue * (1 - safetyCushion / 100)).toFixed(2); return { level: 'mid', icon: '🟠', title: '中风险', message: `⚠️ 明日只要跌 ${safeStr}%，今日利润将全部归零。建议设置止盈线在 ¥${fmtNum(sp)}。`, warnClass: 'warning-mid', safetyCushion, breakEvenDrop: safetyCushion, stopPrice: sp } }
   const earnRatio = safetyCushion > 0.001 ? (1 / safetyCushion).toFixed(1) : '∞'
   const sp = (fund.currentMarketValue * (1 - safetyCushion / 100)).toFixed(2)
-  return { level: 'high', icon: '🔴', title: '高风险', message: `🚨 明日跌 ${safeStr}% 即吞噬今日收益！当前盈亏比 1:${earnRatio}，考虑减仓。建议挂单止盈 ¥${fmtNum(sp)}。`, warnClass: 'warning-high', safetyCushion, breakEvenDrop: safetyCushion, stopPrice: sp, earnRatio }
+  return { level: 'high', icon: '🟠', title: '高风险', message: `🚨 明日跌 ${safeStr}% 即吞噬今日收益！当前盈亏比 1:${earnRatio}，考虑减仓。建议挂单止盈 ¥${fmtNum(sp)}。`, warnClass: 'warning-high', safetyCushion, breakEvenDrop: safetyCushion, stopPrice: sp, earnRatio }
 }
 
 /** 压力测试 */

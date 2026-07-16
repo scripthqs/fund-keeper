@@ -143,9 +143,9 @@ function updateTradingBadge() {
     const remain = (14 - h) * 60 + (60 - m)
     const rh = Math.floor(remain / 60)
     const rm = remain % 60
-    tradingBadge.value = { icon: '🟢', text: `距截止 ${rh}时${rm}分`, class: 'badge-trading' }
+        tradingBadge.value = { icon: '🕘', text: `距截止 ${rh}时${rm}分`, class: 'badge-trading' }
   } else {
-    tradingBadge.value = { icon: '🔴', text: '已闭市 · 明日净值', class: 'badge-closed' }
+    tradingBadge.value = { icon: '⏸️', text: '已闭市 · 明日净值', class: 'badge-closed' }
   }
 }
 

@@ -17,10 +17,10 @@
           <div v-for="f in fundScores" :key="f.name" class="mb-3">
             <div class="flex items-center justify-between mb-1">
               <span class="font-medium text-xs">{{ f.name }}</span>
-              <span class="text-xs font-bold" :style="{ color: f.score >= 70 ? '#22c55e' : f.score >= 40 ? '#f59e0b' : '#ef4444' }">{{ f.score }}分</span>
+              <span class="text-xs font-bold" :style="{ color: f.score >= 70 ? '#2563eb' : f.score >= 40 ? '#d97706' : '#64748b' }">{{ f.score }}分</span>
             </div>
             <div class="h-2 rounded-full overflow-hidden" style="background:var(--border-color)">
-              <div class="h-full" :style="{ width: f.score + '%', background: f.score >= 70 ? '#22c55e' : f.score >= 40 ? '#f59e0b' : '#ef4444' }"></div>
+              <div class="h-full" :style="{ width: f.score + '%', background: f.score >= 70 ? '#3b82f6' : f.score >= 40 ? '#f59e0b' : '#64748b' }"></div>
             </div>
             <div class="mt-1 space-y-0.5">
               <div v-for="d in f.details" :key="d.label" class="text-xs flex items-center justify-between"><span>{{ d.label }}</span><span :style="{ color: d.color }">{{ d.text }}</span></div>
@@ -55,7 +55,7 @@ const finalScore = computed(() => {
   return Math.round(weighted)
 })
 
-const scoreClass = computed(() => finalScore.value >= 70 ? 'score-green' : finalScore.value >= 40 ? 'score-yellow' : 'score-red')
+const scoreClass = computed(() => finalScore.value >= 70 ? 'score-blue' : finalScore.value >= 40 ? 'score-yellow' : 'score-slate')
 const scoreLabel = computed(() => finalScore.value >= 70 ? '健康' : finalScore.value >= 40 ? '需关注' : '高风险')
-const scoreColor = computed(() => finalScore.value >= 70 ? '#22c55e' : finalScore.value >= 40 ? '#f59e0b' : '#ef4444')
+const scoreColor = computed(() => finalScore.value >= 70 ? '#2563eb' : finalScore.value >= 40 ? '#d97706' : '#64748b')
 </script>
