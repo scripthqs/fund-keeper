@@ -29,10 +29,17 @@
         <van-button type="danger" round size="small" @click="clearChat">🗑 清空对话</van-button>
       </div>
       <!-- 输入区域 -->
-      <div class="flex gap-2">
-        <input type="text" class="input-field flex-1 text-sm" v-model="input" placeholder="输入你的问题..." @keydown.enter.exact.prevent="send">
-        <van-button type="primary" round :loading="loading" @click="send">发送</van-button>
-      </div>
+      <van-cell-group inset>
+        <van-field
+          v-model="input"
+          placeholder="输入你的问题..."
+          @keydown.enter.exact.prevent="send"
+        >
+          <template #button>
+            <van-button type="primary" round size="small" :loading="loading" @click="send">发送</van-button>
+          </template>
+        </van-field>
+      </van-cell-group>
       <van-loading v-if="loading" type="spinner" size="16px" class="text-center py-3" color="#3b82f6">
         <span class="ml-2 text-xs" style="color:var(--text-secondary)">AI 正在思考...</span>
       </van-loading>

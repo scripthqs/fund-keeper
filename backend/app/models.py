@@ -127,6 +127,7 @@ class SnapshotOut(SnapshotCreate):
 class DailyParseRequest(BaseModel):
     message: str
     funds: List[dict] = Field(default_factory=list)
+    image: Optional[str] = None  # base64 编码的截图（可选）
 
 
 class DailyParseResult(BaseModel):

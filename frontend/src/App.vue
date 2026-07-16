@@ -8,6 +8,9 @@
           <span class="text-base font-normal ml-2" style="color:var(--text-secondary)">基金投资决策辅助工具</span>
         </h1>
         <p class="text-sm mt-0.5" style="color:var(--text-secondary)">{{ currentTime }}</p>
+        <p class="text-xs mt-0.5">
+          <span :class="tradingBadge.class" class="trading-badge">{{ tradingBadge.icon }} {{ tradingBadge.text }}</span>
+        </p>
       </div>
       <van-button round plain size="small" @click="toggleTheme">
         <span>{{ isDark ? '☀️' : '🌙' }}</span> <span>{{ isDark ? '浅色' : '深色' }}</span>
@@ -53,7 +56,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, provide } from 'vue'
+import { ref, computed, onMounted, onUnmounted, provide } from 'vue'
 import { useStore } from './composables/useStore'
 import ConfigPanel from './components/ConfigPanel.vue'
 import FundList from './components/FundList.vue'
@@ -88,17 +91,75 @@ function toggleTheme() {
 }
 
 function updateTime() {
-  currentTime.value = new Date().toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', weekday: 'long' })
+  const d = new Date()
+  currentTime.value = d.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', weekday: 'long' })
+  updateTradingBadge()
 }
 
-let timer
+// ========== 交易状态（后端 chinese-calendar 库精确判断，含法定节假日+调休）==========
+const tradingBadge = ref({ icon: '', text: '', class: '' })
+const tradingCache = ref(null)  // 当天缓存，避免重复请求
+
+async function fetchTradingStatus() {
+  try {
+    const today = new Date().toISOString().slice(0, 10)
+    // 同一天用缓存
+    if (tradingCache.value && tradingCache.value.date === today) return tradingCache.value
+    const res = await fetch('/api/calendar/trading-status')
+    const data = await res.json()
+    tradingCache.value = { ...data, date: today }
+    return data
+  } catch {
+    return null
+  }
+}
+
+function updateTradingBadge() {
+  const d = new Date()
+  const day = d.getDay()
+  const h = d.getHours()
+  const m = d.getMinutes()
+
+  // 优先使用后端数据
+  const ts = tradingCache.value
+  if (ts && ts.date === new Date().toISOString().slice(0, 10)) {
+    if (!ts.trading) {
+      if (ts.holiday && ts.holiday_name) {
+        tradingBadge.value = { icon: '🎌', text: `${ts.holiday_name}休市`, class: 'badge-closed' }
+      } else {
+        tradingBadge.value = { icon: '⚪', text: '今日休市', class: 'badge-closed' }
+      }
+      return
+    }
+  } else {
+    // 降级：仅周末判断（API 未返回时）
+    if (day === 0 || day === 6) {
+      tradingBadge.value = { icon: '⚪', text: '今日休市', class: 'badge-closed' }
+      return
+    }
+  }
+
+  if (h < 15) {
+    const remain = (14 - h) * 60 + (60 - m)
+    const rh = Math.floor(remain / 60)
+    const rm = remain % 60
+    tradingBadge.value = { icon: '🟢', text: `距截止 ${rh}时${rm}分`, class: 'badge-trading' }
+  } else {
+    tradingBadge.value = { icon: '🔴', text: '已闭市 · 明日净值', class: 'badge-closed' }
+  }
+}
+
+let timer, holidayTimer
 onMounted(async () => {
   updateTime()
-  timer = setInterval(updateTime, 10000)
+  await fetchTradingStatus()
+  timer = setInterval(updateTime, 1000)
+  // 每小时刷新一次交易日历（跨天时自动切换）
+  holidayTimer = setInterval(fetchTradingStatus, 3600000)
   // 检查系统深色模式
   if (window.matchMedia('(prefers-color-scheme: dark)').matches) { isDark.value = true; document.documentElement.classList.add('dark') }
   await store.loadAll()
 })
 
-onUnmounted(() => clearInterval(timer))
+onUnmounted(() => { clearInterval(timer); clearInterval(holidayTimer) })
 </script>
