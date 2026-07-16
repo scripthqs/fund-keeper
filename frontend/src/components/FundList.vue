@@ -19,7 +19,7 @@
             <span>市值：¥{{ fmtNum(fund.currentMarketValue) }}</span>
             <span :class="fund.currentReturnRate >= 0 ? 'text-green-600' : 'text-red-600'" class="font-medium">{{ fmtSigned(fund.currentReturnRate) }}%</span>
             <span>本金：¥{{ fmtNum(fund.initialPrincipal) }}</span>
-            <span>持有：{{ daysBetween(fund.buyDate) || '--' }}天</span>
+            <span :class="(fund.currentMarketValue - fund.totalBuyAmount + fund.totalSellAmount) >= 0 ? 'text-green-600' : 'text-red-600'">收益：¥{{ fmtSigned(fund.currentMarketValue - fund.totalBuyAmount + fund.totalSellAmount) }}</span>
           </div>
         </div>
       </div>

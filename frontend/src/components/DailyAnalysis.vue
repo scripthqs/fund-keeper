@@ -180,12 +180,12 @@ const todayProfit = computed(() => {
   return null
 })
 
-// 输入今日涨跌幅后，自动填入数据库中的总收益率
+// 输入今日涨跌幅后，自动计算新的总收益率（旧收益率 + 今日涨跌幅）
 watch(todayChange, (val) => {
   const fund = selectedFund.value
   if (fund && val != null && !isNaN(val)) {
     autoFilled.value = true
-    totalReturn.value = Math.round(fund.currentReturnRate * 100) / 100
+    totalReturn.value = Math.round((fund.currentReturnRate + val) * 100) / 100
   }
 })
 
@@ -195,10 +195,10 @@ watch(selectedFundId, () => {
   tryAutoFill()
   const fund = selectedFund.value
   const tc = todayChange.value
-  // 如果没有 AI 数据且已有涨跌幅输入，则从数据库填入总收益率
+  // 如果没有 AI 数据且已有涨跌幅输入，则自动计算新的总收益率
   if (!parsedData.value[selectedFundId.value] && fund && tc != null && !isNaN(tc)) {
     autoFilled.value = true
-    totalReturn.value = Math.round(fund.currentReturnRate * 100) / 100
+    totalReturn.value = Math.round((fund.currentReturnRate + tc) * 100) / 100
     return
   }
   if (!fund || tc == null || isNaN(tc)) {

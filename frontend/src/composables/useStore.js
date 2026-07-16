@@ -53,7 +53,7 @@ async function loadAll() {
 }
 
 async function createFund(data) { const c = await api.createFund(data); funds.value.push(c); return c }
-async function updateFund(id, data) { const u = await api.updateFund(id, data); const i = funds.value.findIndex(f => f.id === id); if (i >= 0) Object.assign(funds.value[i], u); return u }
+async function updateFund(id, data) { const u = await api.updateFund(id, data); const i = funds.value.findIndex(f => f.id === id); if (i >= 0) funds.value.splice(i, 1, u); return u }
 async function removeFund(id) { await api.deleteFund(id); funds.value = funds.value.filter(f => f.id !== id) }
 
 async function executeAction(fundId, actionType, amount, reasonType, isMax, note) {
