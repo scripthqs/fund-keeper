@@ -59,6 +59,7 @@ npm run build
 ```
 
 用图形化工具上传：
+
 - 本地 `dist\` → 国内 `/opt/fund-keeper/dist/`（覆盖）
 - 本地 `backend\app\` → 国内 `/opt/fund-keeper/backend/app/`（覆盖）
 
@@ -79,21 +80,6 @@ ssh root@23.95.169.175 "sudo journalctl -u fund-keeper -f"
 ```
 
 按 `Ctrl+C` 退出。
-
----
-
-## DeepSeek 识图配置
-
-如果你要使用 AI 识图功能，请确认 `backend/.env` 里使用的是 DeepSeek 官方 v4 配置：
-
-```bash
-LLM_API_KEY=你的DeepSeekKey
-LLM_BASE_URL=https://api.deepseek.com
-LLM_MODEL=deepseek-v4-pro
-LLM_VISION_MODEL=deepseek-v4-pro
-```
-
-如果这些值还保留着旧的 `/v1` 或旧模型名，识图请求可能会被后端判定为不可用。
 
 ---
 

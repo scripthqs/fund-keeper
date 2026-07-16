@@ -19,33 +19,6 @@
         <van-cell title="取消" clickable class="text-center" style="color:var(--text-secondary)" @click="showFundPicker = false" />
       </van-action-sheet>
 
-      <!-- AI 智能录入 -->
-      <van-cell-group inset class="mb-3">
-        <van-field
-          v-model="aiInput"
-          type="textarea"
-          rows="2"
-          autosize
-          :disabled="aiParsing"
-          placeholder="描述今日收益，如：白酒涨了2.5%，医疗跌了1.2%"
-          label="🤖 AI 录入"
-        >
-          <template #extra>
-            <van-loading v-if="aiParsing" size="14" />
-          </template>
-        </van-field>
-        <div class="flex justify-between items-center px-3 pb-3">
-          <span class="text-xs" style="color:var(--text-secondary)">输入文字后点击发送即可</span>
-          <van-button type="primary" size="small" :loading="aiParsing" round @click="submitAiParse">发送</van-button>
-        </div>
-        <div v-if="parsedSummary" class="px-3 pb-2">
-          <van-tag type="success" size="medium">✅ {{ parsedSummary }}</van-tag>
-        </div>
-        <div v-if="aiError" class="px-3 pb-2">
-          <van-tag type="danger" size="medium">{{ aiError }}</van-tag>
-        </div>
-      </van-cell-group>
-
       <!-- 基金概览 -->
       <van-cell-group v-if="selectedFund" inset class="mb-3">
         <van-cell title="💰 市值" :value="'¥' + fmtNum(selectedFund.currentMarketValue)" />
@@ -109,7 +82,6 @@
 import { ref, computed, inject, watch } from 'vue'
 import { fmtNum, fmtSigned, daysBetween } from '../utils/helpers'
 import { showTip } from '../utils/dialog'
-import { api } from '../api'
 import { analyzeFundEnhanced, evaluateWarning, calcSafetyCushion, calcRecoveryNeeded } from '../utils/engine'
 
 const store = inject('store')
@@ -125,60 +97,10 @@ const totalReturn = ref(null)
 const autoFilled = ref(false)
 const fundUpdating = ref(false)
 
-// ==================== AI 智能录入 ====================
-const aiInput = ref('')
-const aiParsing = ref(false)
-const aiError = ref('')
-const parsedData = ref({})
-const parsedSummary = ref('')
-
 function pickFund(f) {
   selectedFundId.value = f.id
   selectedFundName.value = f.name
   showFundPicker.value = false
-}
-
-function buildFundsForAi() {
-  return funds.value.map(f => ({ id: f.id, name: f.name, currentReturnRate: f.currentReturnRate || 0 }))
-}
-
-function tryAutoFill() {
-  const fundId = selectedFundId.value
-  if (!fundId || !parsedData.value[fundId]) return
-  const d = parsedData.value[fundId]
-  todayChange.value = Math.round(d.todayChange * 100) / 100
-  totalReturn.value = Math.round(d.totalReturn * 100) / 100
-  autoFilled.value = true
-}
-
-async function submitAiParse() {
-  const msg = aiInput.value.trim()
-
-  if (!msg) { showTip('请输入收益描述'); return }
-  if (!funds.value.length) { showTip('请先添加基金'); return }
-
-  aiParsing.value = true
-  aiError.value = ''
-  parsedSummary.value = ''
-
-  try {
-    const res = await api.parseDaily(msg, buildFundsForAi())
-    if (!res.results?.length) { aiError.value = '未能识别出基金涨跌数据，请换个方式描述'; return }
-
-    const data = {}
-    const tags = []
-    for (const r of res.results) {
-      data[r.fundId] = { todayChange: r.todayChange, totalReturn: r.totalReturn }
-      tags.push(`${r.fundName} ${r.todayChange >= 0 ? '+' : ''}${r.todayChange.toFixed(2)}%`)
-    }
-    parsedData.value = data
-    parsedSummary.value = res.message || tags.join('，')
-    tryAutoFill()
-  } catch (e) {
-    aiError.value = e.message || 'AI 解析失败'
-  } finally {
-    aiParsing.value = false
-  }
 }
 
 const selectedFund = computed(() => funds.value.find(f => f.id === selectedFundId.value))
@@ -205,15 +127,8 @@ watch(todayChange, (val) => {
 })
 
 watch(selectedFundId, () => {
-  tryAutoFill()
   const fund = selectedFund.value
   const tc = todayChange.value
-  if (!parsedData.value[selectedFundId.value] && fund && tc != null && !isNaN(tc)) {
-    autoFilled.value = true
-    const multiplier = fund.totalBuyAmount > 0 ? fund.currentMarketValue / fund.totalBuyAmount : 1
-    totalReturn.value = Math.round((fund.currentReturnRate + multiplier * tc) * 100) / 100
-    return
-  }
   if (!fund || tc == null || isNaN(tc)) {
     autoFilled.value = false
     totalReturn.value = null
