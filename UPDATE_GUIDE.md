@@ -23,6 +23,12 @@ npm run build
 
 然后用图形化工具把本地 `dist\` 文件夹拖到国内服务器的 `/opt/fund-keeper/dist/`（覆盖）。
 
+也可以在你本机直接执行：
+
+```bash
+scp -r d:/Work/fund-keeper/frontend/dist/* root@1.14.152.133:/opt/fund-keeper/dist/
+```
+
 在国内服务器 SSH 终端执行：
 
 ```bash
@@ -38,6 +44,12 @@ scp -r /opt/fund-keeper/dist/* root@23.95.169.175:/opt/fund-keeper/dist/
 适用于：改了 `backend/app/` 下的 Python 代码。
 
 用图形化工具把本地 `backend\app\` 文件夹拖到国内服务器的 `/opt/fund-keeper/backend/app/`（覆盖）。
+
+也可以在你本机直接执行：
+
+```bash
+scp -r d:/Work/fund-keeper/backend/app/* root@1.14.152.133:/opt/fund-keeper/backend/app/
+```
 
 在国内服务器 SSH 终端执行：
 
@@ -62,6 +74,13 @@ npm run build
 
 - 本地 `dist\` → 国内 `/opt/fund-keeper/dist/`（覆盖）
 - 本地 `backend\app\` → 国内 `/opt/fund-keeper/backend/app/`（覆盖）
+
+也可以在你本机直接执行：
+
+```bash
+scp -r d:/Work/fund-keeper/frontend/dist/* root@1.14.152.133:/opt/fund-keeper/dist/
+scp -r d:/Work/fund-keeper/backend/app/* root@1.14.152.133:/opt/fund-keeper/backend/app/
+```
 
 在国内服务器 SSH 终端执行：
 
