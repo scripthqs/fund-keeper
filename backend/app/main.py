@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import settings, FRONTEND_DIR
 from app.database import init_db
-from app.routers import funds, config, history, chat, snapshots, calendar, screenshot
+from app.routers import funds, config, history, chat, snapshots, calendar
 
 # 日志配置
 logging.basicConfig(
@@ -44,7 +44,6 @@ app.include_router(history.router)
 app.include_router(chat.router)
 app.include_router(snapshots.router)
 app.include_router(calendar.router)
-app.include_router(screenshot.router)
 
 
 @app.get("/api/health")
@@ -54,7 +53,6 @@ async def health_check():
         "status": "ok",
         "llm_configured": settings.llm_configured,
         "model": settings.LLM_MODEL,
-        "vision_model": settings.vision_model,
     }
 
 

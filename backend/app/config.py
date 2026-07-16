@@ -34,11 +34,9 @@ class Settings:
     """应用配置单例"""
 
     # LLM 配置（支持 DeepSeek / OpenAI 等兼容接口）
-    # DeepSeek V4 系列（v4-pro / v4-flash）原生支持多模态识图
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", os.getenv("OPENAI_API_KEY", ""))
-    LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "deepseek-v4-flash")
-    LLM_VISION_MODEL: str = os.getenv("LLM_VISION_MODEL", "deepseek-v4-pro")  # 多模态识图，V4-Pro 原生支持
+    LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "deepseek-v4-pro")
 
     # 服务配置
     HOST: str = os.getenv("HOST", "0.0.0.0")
@@ -52,11 +50,6 @@ class Settings:
     @property
     def llm_configured(self) -> bool:
         return bool(self.LLM_API_KEY)
-
-    @property
-    def vision_model(self) -> str:
-        """返回实际用于识图的模型名（支持单独配置或回退到主模型）"""
-        return self.LLM_VISION_MODEL if self.LLM_VISION_MODEL else self.LLM_MODEL
 
 
 settings = Settings()

@@ -27,20 +27,15 @@
           rows="2"
           autosize
           :disabled="aiParsing"
-          :placeholder="uploadedImage ? '选填，可补充文字说明（如：忽略第三行）' : '描述今日收益，如：白酒涨了2.5%，医疗跌了1.2%'"
+          placeholder="描述今日收益，如：白酒涨了2.5%，医疗跌了1.2%"
           label="🤖 AI 录入"
         >
           <template #extra>
             <van-loading v-if="aiParsing" size="14" />
           </template>
         </van-field>
-        <!-- 截图预览 -->
-        <div v-if="uploadedImage && !syncPreview" class="flex items-center gap-2 px-3 pb-2">
-          <van-image :src="uploadedImage" width="40" height="40" fit="cover" radius="4" @click="previewImage" />
-          <van-button size="mini" plain type="danger" icon="clear" round @click="clearImage">移除</van-button>
-        </div>
         <div class="flex justify-between items-center px-3 pb-3">
-          <van-uploader :after-read="onImageRead" :max-count="1" accept="image/*" :disabled="aiParsing" />
+          <span class="text-xs" style="color:var(--text-secondary)">输入文字后点击发送即可</span>
           <van-button type="primary" size="small" :loading="aiParsing" round @click="submitAiParse">发送</van-button>
         </div>
         <div v-if="parsedSummary" class="px-3 pb-2">
@@ -48,55 +43,6 @@
         </div>
         <div v-if="aiError" class="px-3 pb-2">
           <van-tag type="danger" size="medium">{{ aiError }}</van-tag>
-        </div>
-      </van-cell-group>
-
-      <!-- 截图同步变更预览 -->
-      <van-cell-group v-if="syncPreview && !syncing" inset class="mb-3">
-        <van-cell title="📋 AI 识别变更预览" :value="syncSummary" />
-        <van-collapse v-model="syncCollapseNames">
-          <!-- 修改的基金 -->
-          <van-collapse-item v-for="(item, idx) in syncPreview.matches" :key="'m'+idx" :name="'m'+idx">
-            <template #title>
-              <van-checkbox v-model="syncSelected[item.fundId]" :name="item.fundId" label-position="left" class="text-xs font-semibold">{{ item.fundName }}</van-checkbox>
-            </template>
-            <div v-if="item.changes?.length" class="mb-2">
-              <van-tag v-for="(ch, ci) in item.changes" :key="ci" plain type="primary" size="medium" class="mr-1 mb-1">{{ ch }}</van-tag>
-            </div>
-            <div v-if="syncSelected[item.fundId]">
-              <van-field v-model.number="item.newData.currentMarketValue" label="市值" type="number" size="small" />
-              <van-field v-model.number="item.newData.currentReturnRate" label="收益率(%)" type="number" size="small" />
-              <van-field v-model.number="item.newData.totalBuyAmount" label="累计买入" type="number" size="small" />
-              <van-field v-model.number="item.newData.initialPrincipal" label="初始本金" type="number" size="small" />
-              <van-field v-model="item.newData.buyDate" label="买入日期" placeholder="YYYY-MM-DD" size="small" />
-            </div>
-          </van-collapse-item>
-
-          <!-- 新增基金 -->
-          <van-collapse-item v-for="(item, idx) in syncPreview.newFunds" :key="'n'+idx" :name="'n'+idx">
-            <template #title>
-              <van-checkbox v-model="syncNewSelected[idx]" label-position="left" class="text-xs font-semibold text-blue-600">➕ {{ item.name }}</van-checkbox>
-            </template>
-            <div v-if="syncNewSelected[idx]">
-              <van-field v-model.number="item.currentMarketValue" label="市值" type="number" size="small" />
-              <van-field v-model.number="item.currentReturnRate" label="收益率(%)" type="number" size="small" />
-              <van-field v-model.number="item.totalBuyAmount" label="累计买入" type="number" size="small" />
-              <van-field v-model.number="item.initialPrincipal" label="初始本金" type="number" size="small" />
-              <van-field v-model="item.buyDate" label="买入日期" placeholder="YYYY-MM-DD" size="small" />
-            </div>
-          </van-collapse-item>
-
-          <!-- 未变化 -->
-          <van-collapse-item v-if="syncPreview.unchanged?.length" name="unchanged">
-            <template #title>
-              <span class="text-xs" style="color:var(--text-secondary)">✅ 未变化：{{ syncPreview.unchanged.map(u => u.fundName).join('、') }}</span>
-            </template>
-          </van-collapse-item>
-        </van-collapse>
-
-        <div class="flex gap-2 p-3">
-          <van-button type="primary" round block size="small" :loading="syncing" @click="confirmSync">确认同步</van-button>
-          <van-button type="default" round block size="small" @click="cancelSync">取消</van-button>
         </div>
       </van-cell-group>
 
@@ -130,6 +76,9 @@
           v-model.number="todayChange"
           label="今日涨跌幅 (%)"
           label-width="8em"
+          label-align="left"
+          input-align="right"
+          class="analysis-number-field"
           type="number"
           placeholder="例：+2.5"
           size="small"
@@ -138,6 +87,9 @@
           v-model.number="totalReturn"
           :label="autoFilled ? '总收益率 (%) · 自动计算' : '总收益率 (%)'"
           label-width="8em"
+          label-align="left"
+          input-align="right"
+          class="analysis-number-field"
           type="number"
           placeholder="例：+21"
           size="small"
@@ -154,10 +106,9 @@
 </template>
 
 <script setup>
-import { ref, computed, inject, watch, reactive } from 'vue'
-import { showImagePreview } from 'vant'
+import { ref, computed, inject, watch } from 'vue'
 import { fmtNum, fmtSigned, daysBetween } from '../utils/helpers'
-import { showTip, askConfirm } from '../utils/dialog'
+import { showTip } from '../utils/dialog'
 import { api } from '../api'
 import { analyzeFundEnhanced, evaluateWarning, calcSafetyCushion, calcRecoveryNeeded } from '../utils/engine'
 
@@ -180,158 +131,11 @@ const aiParsing = ref(false)
 const aiError = ref('')
 const parsedData = ref({})
 const parsedSummary = ref('')
-const uploadedImage = ref('')
-
-function previewImage() {
-  showImagePreview({ images: [uploadedImage.value], closeable: true })
-}
-
-// ==================== 截图同步 ====================
-const syncPreview = ref(null)
-const syncSelected = reactive({})
-const syncNewSelected = reactive({})
-const syncing = ref(false)
-const syncCollapseNames = ref([])
-
-const syncSummary = computed(() => {
-  if (!syncPreview.value) return ''
-  const parts = []
-  if (syncPreview.value.matches?.length) parts.push(`修改${syncPreview.value.matches.length}只`)
-  if (syncPreview.value.newFunds?.length) parts.push(`新增${syncPreview.value.newFunds.length}只`)
-  return parts.join('，')
-})
 
 function pickFund(f) {
   selectedFundId.value = f.id
   selectedFundName.value = f.name
   showFundPicker.value = false
-}
-
-/** Vant Uploader 回调 */
-function onImageRead(file) {
-  if (file.file.size > 5 * 1024 * 1024) {
-    showTip('图片不能超过 5MB')
-    return
-  }
-  uploadedImage.value = file.content
-  aiError.value = ''
-  submitScreenshotSync()
-}
-
-function clearImage() {
-  uploadedImage.value = ''
-  syncPreview.value = null
-}
-
-function buildFullFundsForAi() {
-  return funds.value.map(f => ({
-    id: f.id, name: f.name,
-    currentMarketValue: f.currentMarketValue || 0,
-    currentReturnRate: f.currentReturnRate || 0,
-    totalBuyAmount: f.totalBuyAmount || 0,
-    totalSellAmount: f.totalSellAmount || 0,
-    initialPrincipal: f.initialPrincipal || 0,
-    buyDate: f.buyDate || '',
-  }))
-}
-
-async function submitScreenshotSync() {
-  const img = uploadedImage.value
-  if (!img) { showTip('请先上传截图'); return }
-
-  aiParsing.value = true
-  aiError.value = ''
-  syncPreview.value = null
-
-  try {
-    const res = await api.screenshotSync(img, buildFullFundsForAi())
-    if (res.error) { aiError.value = res.error; return }
-
-    const hasMatches = res.matches?.length > 0
-    const hasNew = res.newFunds?.length > 0
-    const hasUnchanged = res.unchanged?.length > 0
-
-    if (!hasMatches && !hasNew && !hasUnchanged) {
-      aiError.value = '未能从截图中识别出基金数据'
-      return
-    }
-
-    for (const m of res.matches) syncSelected[m.fundId] = m.changes?.length > 0
-    for (let i = 0; i < (res.newFunds || []).length; i++) syncNewSelected[i] = true
-
-    syncPreview.value = res
-    syncCollapseNames.value = (res.matches || []).map((_, i) => 'm' + i)
-      .concat((res.newFunds || []).map((_, i) => 'n' + i))
-
-    const parts = []
-    if (hasMatches) parts.push(`${res.matches.length} 只可更新`)
-    if (hasNew) parts.push(`${res.newFunds.length} 只新基金`)
-    if (hasUnchanged) parts.push(`${res.unchanged.length} 只无变化`)
-    parsedSummary.value = parts.join('，')
-  } catch (e) {
-    aiError.value = e.message || '截图识别失败'
-  } finally {
-    aiParsing.value = false
-  }
-}
-
-async function confirmSync() {
-  if (!syncPreview.value) return
-
-  const applyMatches = []
-  for (const m of syncPreview.value.matches) {
-    if (syncSelected[m.fundId]) {
-      applyMatches.push({
-        fundId: m.fundId, fundName: m.fundName,
-        newData: {
-          name: m.fundName,
-          currentMarketValue: m.newData.currentMarketValue,
-          currentReturnRate: m.newData.currentReturnRate,
-          totalBuyAmount: m.newData.totalBuyAmount,
-          initialPrincipal: m.newData.initialPrincipal,
-          buyDate: m.newData.buyDate,
-        },
-      })
-    }
-  }
-
-  const applyNewFunds = []
-  for (let i = 0; i < (syncPreview.value.newFunds || []).length; i++) {
-    if (syncNewSelected[i]) applyNewFunds.push(syncPreview.value.newFunds[i])
-  }
-
-  if (!applyMatches.length && !applyNewFunds.length) {
-    showTip('请至少勾选一项要同步的数据')
-    return
-  }
-
-  const confirmText = []
-  if (applyMatches.length) confirmText.push(`更新 ${applyMatches.length} 只基金`)
-  if (applyNewFunds.length) confirmText.push(`新增 ${applyNewFunds.length} 只基金`)
-  const ok = await askConfirm(`确认${confirmText.join('，')}？`)
-  if (!ok) return
-
-  syncing.value = true
-  try {
-    const res = await api.applyScreenshotSync(applyMatches, applyNewFunds)
-    await store.loadAll()
-    const msgParts = []
-    if (res.updated?.length) msgParts.push(`已更新：${res.updated.join('、')}`)
-    if (res.created?.length) msgParts.push(`已新增：${res.created.join('、')}`)
-    showTip('✅ ' + msgParts.join('；'))
-    syncPreview.value = null
-    uploadedImage.value = ''
-    parsedSummary.value = ''
-  } catch (e) {
-    showTip('同步失败: ' + (e.message || '未知错误'))
-  } finally {
-    syncing.value = false
-  }
-}
-
-function cancelSync() {
-  syncPreview.value = null
-  parsedSummary.value = ''
 }
 
 function buildFundsForAi() {
@@ -349,14 +153,8 @@ function tryAutoFill() {
 
 async function submitAiParse() {
   const msg = aiInput.value.trim()
-  const img = uploadedImage.value
 
-  if (img) {
-    if (!syncPreview.value) await submitScreenshotSync()
-    return
-  }
-
-  if (!msg) { showTip('请输入收益描述或上传截图'); return }
+  if (!msg) { showTip('请输入收益描述'); return }
   if (!funds.value.length) { showTip('请先添加基金'); return }
 
   aiParsing.value = true
@@ -470,3 +268,16 @@ function analyze() {
   showAdvice.value = true
 }
 </script>
+
+<style scoped>
+.analysis-number-field :deep(.van-field__label) {
+  white-space: nowrap;
+  font-size: 0.82rem;
+  line-height: 1.2;
+}
+
+.analysis-number-field :deep(.van-field__control) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+</style>

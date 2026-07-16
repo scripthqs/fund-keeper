@@ -106,7 +106,6 @@ async def parse_daily(req: DailyParseRequest):
         results = parse_daily_data(
             user_message=req.message,
             funds=req.funds,
-            image_base64=req.image,
         )
         return DailyParseResponse(
             results=[DailyParseResult(**r) for r in results],

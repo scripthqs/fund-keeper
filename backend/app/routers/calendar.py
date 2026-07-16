@@ -1,6 +1,6 @@
 """中国节假日 / 交易日判断路由"""
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter
 
@@ -44,7 +44,7 @@ async def trading_status():
         holiday_name = ""
 
     # 计算距 15:00 的剩余秒数
-    cutoff = today.replace(hour=15, minute=0, second=0, microsecond=0)
+    cutoff = datetime.combine(today, time(15, 0))
     cutoff_remaining = max(0, int((cutoff - now).total_seconds())) if trading else 0
 
     # 计算下一个交易日

@@ -9,7 +9,7 @@ import axios from 'axios'
 
 const http = axios.create({
   baseURL: '/api',
-  timeout: 60000,  // 60s，截图识别需要更长时间
+  timeout: 30000,
   headers: { 'Content-Type': 'application/json' },
 })
 
@@ -65,13 +65,6 @@ export const api = {
   getSnapshots: (fundId) => http.get('/snapshots/' + fundId),
   saveSnapshot: (data) => http.post('/snapshots', data),
 
-  // 每日数据智能解析（可选 image: base64 截图）
-  parseDaily: (message, funds, image) => http.post('/parse-daily', { message, funds, image }),
-
-  // 截图同步：上传截图 → AI 识别 → 返回变更预览
-  screenshotSync: (image, funds) => http.post('/screenshot-sync', { image, funds }),
-
-  // 确认执行截图同步
-  applyScreenshotSync: (applyMatches, applyNewFunds) =>
-    http.post('/screenshot-sync/apply', { applyMatches, applyNewFunds }),
+  // 每日数据智能解析
+  parseDaily: (message, funds) => http.post('/parse-daily', { message, funds }),
 }
