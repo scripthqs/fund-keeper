@@ -97,25 +97,25 @@ def init_db():
 # ==================== 默认配置 ====================
 
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "style": "进取型",
-    "stopProfitLine": 20,
-    "addPositionLine": -15,
+    "style": "激进型",
+    "stopProfitLine": 30,
+    "addPositionLine": -20,
     "addPositionMode": "multi",
     "addTiers": [
-        {"line": -5, "ratio": 3},
-        {"line": -10, "ratio": 5},
-        {"line": -15, "ratio": 8},
-        {"line": -20, "ratio": 12},
+        {"line": -8, "ratio": 3},
+        {"line": -12, "ratio": 5},
+        {"line": -17, "ratio": 8},
+        {"line": -22, "ratio": 12},
     ],
-    "stopProfitRatio": 12,
-    "trailingStop": 8,
+    "stopProfitRatio": 10,
+    "trailingStop": 15,
     "useTrailingStop": True,
-    "extremeVolatility": 5,
+    "extremeVolatility": 8,
     "enableStopLoss": True,
-    "stopLossLine": -25,
-    "stopLossRatio": 50,
+    "stopLossLine": -35,
+    "stopLossRatio": 60,
     "freeDays": 7,
-    "maxPosition": 40,
+    "maxPosition": 50,
     "peakReturnRate": {},
 }
 
