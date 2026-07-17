@@ -280,7 +280,15 @@ async def execute_action(req: ExecuteActionRequest):
         )
         updated["current_return_rate"] = new_rate
 
-    # 记录历史
+    # 记录撤回快照（操作前状态）写入 history 表
+    import json
+    snapshot_before = json.dumps({
+        "total_buy_amount": fund["total_buy_amount"],
+        "total_sell_amount": fund["total_sell_amount"],
+        "current_market_value": fund["current_market_value"],
+        "current_return_rate": fund["current_return_rate"],
+    }, ensure_ascii=False)
+
     if req.note:
         note = req.note
     else:
@@ -297,8 +305,8 @@ async def execute_action(req: ExecuteActionRequest):
     from app.database import today_str
     history_id = gen_id()
     conn.execute(
-        """INSERT INTO history (id, date, fund_name, type, amount, return_rate, note, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        """INSERT INTO history (id, date, fund_name, type, amount, return_rate, note, created_at, snapshot_before)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             history_id,
             today_str(),
@@ -308,10 +316,61 @@ async def execute_action(req: ExecuteActionRequest):
             updated["current_return_rate"],
             note,
             now_str(),
+            snapshot_before,
         ),
     )
 
     conn.commit()
+    result = dict(updated)
+    conn.close()
+    return {"ok": True, "fund": result, "historyId": history_id}
+
+
+@router.post("/undo/{history_id}")
+async def undo_action(history_id: str):
+    """撤回指定操作记录，恢复基金到操作前状态"""
+    conn = get_db()
+    row = conn.execute("SELECT * FROM history WHERE id = ?", (history_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="操作记录不存在")
+    row = dict(row)
+
+    snapshot = row.get("snapshot_before")
+    if not snapshot:
+        conn.close()
+        raise HTTPException(status_code=400, detail="该操作记录没有撤回快照（可能为旧数据）")
+
+    import json
+    try:
+        before = json.loads(snapshot)
+    except json.JSONDecodeError:
+        conn.close()
+        raise HTTPException(status_code=500, detail="撤回快照数据损坏")
+
+    fund_name = row["fund_name"]
+    fund = conn.execute("SELECT * FROM funds WHERE name = ?", (fund_name,)).fetchone()
+    if not fund:
+        conn.close()
+        raise HTTPException(status_code=404, detail="对应基金不存在，可能已被删除")
+
+    fund = dict(fund)
+    conn.execute(
+        """UPDATE funds SET total_buy_amount=?, total_sell_amount=?,
+           current_market_value=?, current_return_rate=? WHERE name=?""",
+        (
+            before["total_buy_amount"],
+            before["total_sell_amount"],
+            before["current_market_value"],
+            before["current_return_rate"],
+            fund_name,
+        ),
+    )
+    # 删除该条历史记录
+    conn.execute("DELETE FROM history WHERE id = ?", (history_id,))
+    conn.commit()
+
+    updated = conn.execute("SELECT * FROM funds WHERE name = ?", (fund_name,)).fetchone()
     result = dict(updated)
     conn.close()
     return {"ok": True, "fund": result}

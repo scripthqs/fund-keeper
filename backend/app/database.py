@@ -56,6 +56,11 @@ def init_db():
         ("last_nav_update", "TEXT DEFAULT ''"),
     ])
 
+    # 兼容旧数据库：添加 snapshot_before 列（用于撤回功能）
+    _migrate_columns(cursor, "history", [
+        ("snapshot_before", "TEXT DEFAULT ''"),
+    ])
+
     # 配置表（单行，id 固定为 'default'）
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS config (

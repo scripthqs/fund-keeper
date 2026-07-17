@@ -16,6 +16,7 @@
             <thead><tr style="color:var(--text-secondary);border-bottom:1px solid var(--border-color)">
               <th class="text-left py-2 px-2">日期</th><th class="text-left py-2 px-2">基金</th><th class="text-left py-2 px-2">类型</th>
               <th class="text-right py-2 px-2">金额(元)</th><th class="text-right py-2 px-2">收益率</th><th class="text-left py-2 px-2">备注</th>
+              <th class="text-center py-2 px-2">操作</th>
             </tr></thead>
             <tbody>
               <tr v-for="h in history" :key="h.id" style="border-bottom:1px solid var(--border-color)">
@@ -24,6 +25,9 @@
                 <td class="py-2 px-2 text-right font-medium">¥{{ fmtNum(h.amount) }}</td>
                 <td class="py-2 px-2 text-right" :class="(h.returnRate || 0) >= 0 ? 'text-red-600' : 'text-green-600'">{{ fmtSigned(h.returnRate) }}%</td>
                 <td class="py-2 px-2 text-xs" style="color:var(--text-secondary)">{{ h.note || '-' }}</td>
+                <td class="py-2 px-2 text-center">
+                  <van-button v-if="h.canUndo" size="mini" round plain type="warning" :loading="undoingId === h.id" @click="undo(h)">↩ 撤回</van-button>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -40,6 +44,9 @@
               <span :style="{ color: (h.returnRate || 0) >= 0 ? '#dc2626' : '#16a34a', fontWeight: 600 }">📊 {{ fmtSigned(h.returnRate) }}%</span>
               <span>{{ h.note || '-' }}</span>
             </div>
+            <div v-if="h.canUndo" class="mt-2 text-right">
+              <van-button size="mini" round plain type="warning" :loading="undoingId === h.id" @click="undo(h)">↩ 撤回此操作</van-button>
+            </div>
           </div>
         </div>
       </template>
@@ -48,12 +55,26 @@
 </template>
 
 <script setup>
-import { inject } from 'vue'
+import { inject, ref } from 'vue'
 import { fmtNum, fmtSigned } from '../utils/helpers'
 import { askConfirm, showTip } from '../utils/dialog'
 
 const store = inject('store')
 const history = store.history
+const undoingId = ref(null)
+
+async function undo(h) {
+  if (!await askConfirm(`确认撤回对「${h.fundName}」的${h.type}操作（¥${fmtNum(h.amount)}）吗？\n撤回后基金数据将恢复到操作前状态。`)) return
+  undoingId.value = h.id
+  try {
+    await store.undoAction(h.id)
+    showTip('✅ 已撤回操作')
+  } catch (e) {
+    showTip('撤回失败: ' + (e.message || '未知错误'))
+  } finally {
+    undoingId.value = null
+  }
+}
 
 async function clear() {
   if (!await askConfirm('确定清空所有操作历史吗？此操作不可恢复。')) return

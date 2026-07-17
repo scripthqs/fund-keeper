@@ -68,6 +68,9 @@ export const api = {
   getHistory: () => http.get('/history'),
   clearHistory: () => http.delete('/history'),
 
+  // 撤回
+  undoAction: (historyId) => http.post('/funds/undo/' + historyId),
+
   // 聊天
   getChatMessages: () => http.get('/chat/messages'),
   clearChatMessages: () => http.delete('/chat/messages'),

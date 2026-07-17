@@ -55,12 +55,12 @@ export function analyzeFundEnhanced(fund, todayChange, totalReturn, config, peak
 
   // 规则3：加仓
   if (config.addPositionMode === 'multi') {
-    const multiBuy = getMultiTierAddBuy(fund, config)
+    const multiBuy = getMultiTierAddBuy(fund, config, totalReturn)
     if (multiBuy) {
       return { type: 'buy', title: `📉 触发第 ${multiBuy.tierIdx} 档加仓！`, message: `当前总收益率 ${fmtSigned(totalReturn)}%，触发第 ${multiBuy.tierIdx} 档加仓线（≤${multiBuy.line}%）。建议买入初始本金的 ${multiBuy.ratio}%，即 ¥${fmtNum(multiBuy.buyAmount)} 元（金字塔策略：越跌越买）。`, cssClass: 'advice-buy', actionAmount: multiBuy.buyAmount, actionType: '买入' }
     }
   } else {
-    const singleBuy = getSingleAddBuy(fund, config)
+    const singleBuy = getSingleAddBuy(fund, config, totalReturn)
     if (singleBuy) {
       return { type: 'buy', title: '📉 触发加仓！', message: `当前总收益率 ${fmtSigned(totalReturn)}%，已触发加仓线（≤${config.addPositionLine}%）。建议买入初始本金的 5%-10%，即 ¥${fmtNum(singleBuy.minBuy)} - ¥${fmtNum(singleBuy.maxBuy)} 元。`, cssClass: 'advice-buy', actionAmount: singleBuy.minBuy, actionAmountMax: singleBuy.maxBuy, actionType: '买入' }
     }
@@ -90,11 +90,11 @@ export function checkTrailingStop(fund, config, peakReturnRate) {
 }
 
 /** 多档加仓 */
-export function getMultiTierAddBuy(fund, config) {
+export function getMultiTierAddBuy(fund, config, totalReturn) {
   if (config.addPositionMode !== 'multi' || !config.addTiers) return null
   const sortedTiers = [...config.addTiers].sort((a, b) => b.line - a.line)
   for (const tier of sortedTiers) {
-    if (fund.currentReturnRate <= tier.line) {
+    if (totalReturn <= tier.line) {
       const buyAmount = round(mulDiv(fund.initialPrincipal, tier.ratio, 100))
       return { tierIdx: config.addTiers.indexOf(tier) + 1, line: tier.line, ratio: tier.ratio, buyAmount }
     }
@@ -103,8 +103,8 @@ export function getMultiTierAddBuy(fund, config) {
 }
 
 /** 单档加仓 */
-export function getSingleAddBuy(fund, config) {
-  if (fund.currentReturnRate > config.addPositionLine) return null
+export function getSingleAddBuy(fund, config, totalReturn) {
+  if (totalReturn > config.addPositionLine) return null
   return { minBuy: round(mulDiv(fund.initialPrincipal, 5, 100)), maxBuy: round(mulDiv(fund.initialPrincipal, 10, 100)) }
 }
 

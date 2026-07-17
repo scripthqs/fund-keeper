@@ -6,13 +6,25 @@
         <div class="font-semibold text-base mb-1">{{ data.result.title }}</div>
         <div style="color:var(--text-primary)" v-html="formatMessage(data.result.message)"></div>
       </div>
-      <div class="p-3 flex gap-2 flex-wrap">
-        <van-button v-if="data.result.actionAmount != null" :type="data.result.isStopLoss ? 'danger' : 'success'" round size="small" style="flex:1" @click="exec(data.result.actionType, data.result.actionAmount, data.result.type)">
-          ✅ 执行{{ data.result.actionType }}操作
-        </van-button>
-        <van-button v-if="data.result.actionAmountMax && !data.result.isStopLoss" type="warning" round size="small" style="flex:1" @click="exec(data.result.actionType, data.result.actionAmountMax, data.result.type, true)">
-          📈 按上限{{ data.result.actionType }}
-        </van-button>
+      <div v-if="data.result.actionAmount != null" class="p-3">
+        <van-field
+          v-model.number="editAmount"
+          type="number"
+          :label="editLabel"
+          class="edit-amount-field"
+          size="small"
+          label-width="7em"
+        >
+          <template #button>
+            <van-button size="small" type="primary" round :loading="submitting" @click="applyEdit">确认{{ data.result.actionType }}</van-button>
+          </template>
+        </van-field>
+        <div class="flex gap-2 mt-2">
+          <van-button v-if="data.result.actionAmount" plain size="small" round class="flex-1" @click="editAmount = data.result.actionAmount">默认金额 ¥{{ fmtThin(data.result.actionAmount) }}</van-button>
+          <van-button v-if="data.result.actionAmountMax && !data.result.isStopLoss" plain size="small" round class="flex-1" @click="editAmount = data.result.actionAmountMax">上限 ¥{{ fmtThin(data.result.actionAmountMax) }}</van-button>
+        </div>
+      </div>
+      <div class="p-3">
         <van-button round plain size="small" @click="$emit('close')">关闭</van-button>
       </div>
       <!-- AI 解读 -->
@@ -78,7 +90,7 @@ import { ref, computed, inject, watch } from 'vue'
 import { fmtNum, fmtSigned, daysBetween } from '../utils/helpers'
 import { calcSafetyCushion, calcStressTest, getMoodStyle } from '../utils/engine'
 import { api } from '../api'
-import { askConfirm, showError } from '../utils/dialog'
+import { askConfirm, showError, showTip } from '../utils/dialog'
 
 const store = inject('store')
 const emit = defineEmits(['close', 'actionDone'])
@@ -88,6 +100,8 @@ const stressDrop = ref(-5)
 const emotionLoading = ref(false)
 const emotionTitle = ref('AI 正在生成情绪文案...')
 const emotionLines = ref([])
+const editAmount = ref(null)
+const submitting = ref(false)
 
 // AI 解读相关
 const interpretLoading = ref(false)
@@ -95,6 +109,7 @@ const interpretText = ref('')
 const interpretError = ref('')
 
 const mood = computed(() => data.value ? getMoodStyle(data.value.todayChange, data.value.totalReturn) : { emoji: '😐', cardClass: 'emotion-down-slight' })
+const editLabel = computed(() => data.value?.result?.actionType === '卖出' ? '卖出金额 (元)' : '买入金额 (元)')
 const profit = computed(() => data.value ? calcSafetyCushion(data.value.fund, data.value.todayChange) : { todayProfit: 0 })
 const breakDrop = computed(() => data.value?.warning?.breakEvenDrop != null ? data.value.warning.breakEvenDrop.toFixed(2) : '--')
 const safeCushion = computed(() => data.value?.safetyCushion != null ? data.value.safetyCushion.toFixed(2) : '--')
@@ -102,7 +117,12 @@ const recoveryDisplay = computed(() => data.value?.recoveryNeeded != null ? data
 const stress = computed(() => data.value ? calcStressTest(data.value.fund, stressDrop.value) : { simMarketValue: 0, simReturnRate: 0, simLoss: 0, recoveryText: '' })
 
 watch(data, (d) => {
-  if (d) { stressDrop.value = -5; fetchEmotion(d); resetInterpretation() }
+  if (d) {
+    stressDrop.value = -5
+    editAmount.value = d.result.actionAmount ?? null
+    fetchEmotion(d)
+    resetInterpretation()
+  }
 }, { immediate: true })
 
 function resetInterpretation() {
@@ -169,14 +189,26 @@ async function fetchEmotion(d) {
   finally { emotionLoading.value = false }
 }
 
-async function exec(actionType, amount, reasonType, isMax) {
-  const label = isMax ? `${actionType}（上限）` : actionType
-  if (!await askConfirm(`确认执行${label}操作，金额 ¥${fmtNum(amount)}？`)) return
+async function exec() {
+  if (!editAmount.value || editAmount.value <= 0) { await import('../utils/dialog').then(m => m.showTip('请输入有效的操作金额')); return }
+  const actionType = data.value.result.actionType
+  const amount = editAmount.value
+  const reasonType = data.value.result.type
+  if (!await askConfirm(`确认执行${actionType}操作，金额 ¥${fmtNum(amount)}？`)) return
+  submitting.value = true
   try {
-    await store.executeAction(data.value.fund.id, actionType, amount, reasonType, isMax)
+    await store.executeAction(data.value.fund.id, actionType, amount, reasonType, false)
+    showTip(`✅ ${actionType}操作成功！可在「操作历史」中撤回。`)
     emit('actionDone')
   } catch (e) { showError('操作失败: ' + e.message) }
+  finally { submitting.value = false }
 }
+
+function applyEdit() {
+  exec()
+}
+
+function fmtThin(v) { return fmtNum(v) }
 
 function formatMessage(msg) {
   return msg.replace(/\n/g, '<br>')
@@ -266,4 +298,8 @@ function formatMessage(msg) {
 .interpret-error {
   font-size: 0.8rem; color: #f59e0b; cursor: pointer; margin-top: 0.5rem; text-align: center;
 }
+
+/* 金额编辑 */
+.edit-amount-field :deep(.van-field__label) { white-space: nowrap; font-size: 0.85rem; }
+.edit-amount-field :deep(.van-field__control) { text-align: right; }
 </style>

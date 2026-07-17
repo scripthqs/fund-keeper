@@ -102,7 +102,7 @@ async function execute() {
   submitting.value = true
   try {
     await store.executeAction(fund.id, actionType.value, amount.value, '', false, displayNote)
-    showTip(`${actionType.value}操作成功！`)
+    showTip(`${actionType.value}操作成功！可在「操作历史」中撤回。`)
     amount.value = null
     note.value = ''
   } catch (e) {

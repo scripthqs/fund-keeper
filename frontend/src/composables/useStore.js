@@ -36,7 +36,7 @@ async function loadAll() {
     ])
     Object.assign(config, DEFAULT_CONFIG, cfg)
     funds.value = fundList
-    history.value = hist
+    history.value = hist.map(h => ({ ...h, canUndo: !!h.snapshot_before }))
     chatMessages.value = chat
     aiStatus.value = { configured: health.llm_configured, model: health.model, connected: true }
     for (const f of funds.value) {
@@ -63,8 +63,28 @@ async function executeAction(fundId, actionType, amount, reasonType, isMax, note
     const i = funds.value.findIndex(f => f.id === fundId)
     if (i >= 0) Object.assign(funds.value[i], r.fund)
     const displayNote = note || (reasonMap[reasonType] || '') + (isMax ? '（上限）' : '')
-    history.value.unshift({ id: uuid(), date: new Date().toISOString().split('T')[0], fundName: r.fund.name, type: actionType, amount, returnRate: r.fund.currentReturnRate ?? r.fund.current_return_rate ?? 0, note: displayNote })
+    history.value.unshift({
+      id: r.historyId || uuid(),
+      date: new Date().toISOString().split('T')[0],
+      fundName: r.fund.name,
+      type: actionType,
+      amount,
+      returnRate: r.fund.currentReturnRate ?? r.fund.current_return_rate ?? 0,
+      note: displayNote,
+      canUndo: true,
+    })
   }
+  return r
+}
+
+async function undoAction(historyId) {
+  const r = await api.undoAction(historyId)
+  if (r.fund) {
+    const i = funds.value.findIndex(f => f.name === r.fund.name)
+    if (i >= 0) Object.assign(funds.value[i], r.fund)
+  }
+  // 从本地历史列表中移除
+  history.value = history.value.filter(h => h.id !== historyId)
   return r
 }
 
@@ -126,7 +146,7 @@ export function useStore() {
   return {
     config, funds, history, chatMessages, dailySnapshots, aiStatus, loading,
     totalPrincipal, totalMarketValue, totalBuy, totalSell, totalReturnRate,
-    loadAll, createFund, updateFund, removeFund, executeAction,
+    loadAll, createFund, updateFund, removeFund, executeAction, undoAction,
     saveConfig, updatePeakReturn, clearHistory,
     sendChatMessage, clearChat, saveSnapshot, buildFundContext,
     queryFund, autoUpdateNav,

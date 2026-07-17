@@ -188,4 +188,5 @@ class ExecuteActionRequest(BaseModel):
 class ExecuteActionResponse(BaseModel):
     ok: bool
     fund: FundOut
+    history_id: str = Field("", alias="historyId")
 
