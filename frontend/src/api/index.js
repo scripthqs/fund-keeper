@@ -17,13 +17,26 @@ const http = axios.create({
 http.interceptors.response.use(
   (response) => response.data,
   (error) => {
-    // axios 错误对象：error.response.data.detail 是后端返回的错误信息
+    // 后端返回的 HTTP 错误（4xx/5xx）
     const detail =
       error.response?.data?.detail ||
       error.response?.data?.message ||
-      error.message ||
-      '网络请求失败'
-    return Promise.reject(new Error(detail))
+      null
+
+    if (detail) {
+      // 后端返回了具体错误描述，直接使用
+      return Promise.reject(new Error(detail))
+    }
+
+    // 网络层错误（无 response，说明请求根本没到达后端）
+    if (error.code === 'ECONNABORTED') {
+      return Promise.reject(new Error('请求超时，请检查网络连接'))
+    }
+    if (!error.response) {
+      return Promise.reject(new Error('网络连接失败，请检查服务是否正常运行'))
+    }
+
+    return Promise.reject(new Error(error.message || '网络请求失败'))
   }
 )
 

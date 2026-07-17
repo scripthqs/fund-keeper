@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -72,6 +72,10 @@ if FRONTEND_DIR.exists():
         前端路由兜底：非 /api 路径的请求都返回前端文件
         部署时只需运行后端，前端由后端一并托管
         """
+        # 排除 /api 路径，确保不会被兜底路由拦截
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="接口不存在")
+
         file_path = FRONTEND_DIR / full_path
         if file_path.is_file():
             return FileResponse(str(file_path))

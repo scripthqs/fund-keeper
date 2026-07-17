@@ -11,7 +11,7 @@ from app.models import (
     FundQueryResponse, AutoUpdateResult, AutoUpdateResponse,
 )
 
-from app.fund_api import query_fund_by_code, get_fund_nav_on_date
+from app.fund_api import query_fund_by_code, get_fund_nav_on_date, FundQueryError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/funds", tags=["基金管理"])
@@ -111,10 +111,16 @@ async def query_fund(code: str = Query(..., min_length=6, max_length=6, descript
     通过基金代码查询天天基金实时数据
     返回基金名称、最新净值、实时估值、估算涨跌幅
     """
-    info = await query_fund_by_code(code)
-    if not info:
-        raise HTTPException(status_code=404, detail=f"未查询到基金代码 {code} 的信息，请确认代码正确")
-    return info
+    try:
+        info = await query_fund_by_code(code)
+        return info
+    except FundQueryError as e:
+        # 根据错误类型返回不同状态码
+        status_code = 502 if e.recoverable else 404
+        raise HTTPException(
+            status_code=status_code,
+            detail=e.args[0] if e.args else "查询失败",
+        ) from e
 
 
 @router.post("/auto-update", response_model=AutoUpdateResponse)
@@ -142,8 +148,22 @@ async def auto_update_nav():
             skipped_count += 1
             continue
 
-        info = await query_fund_by_code(code)
-        if not info or info["nav"] <= 0:
+        try:
+            info = await query_fund_by_code(code)
+        except FundQueryError:
+            results.append(AutoUpdateResult(
+                fundId=fund["id"],
+                fundName=fund["name"],
+                fundCode=code,
+                success=False,
+                oldMarketValue=fund["current_market_value"],
+                newMarketValue=fund["current_market_value"],
+                message="获取基金实时数据失败",
+            ))
+            failed_count += 1
+            continue
+
+        if info["nav"] <= 0:
             results.append(AutoUpdateResult(
                 fundId=fund["id"],
                 fundName=fund["name"],

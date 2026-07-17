@@ -202,7 +202,8 @@ async function queryFundInfo() {
     }
     showTip(`已查询到：${info.name}（净值 ${info.nav}）`)
   } catch (e) {
-    showError('查询失败: ' + (e.message || '未知错误'))
+    const errMsg = e.message || '未知错误'
+    showError(errMsg)
   } finally {
     querying.value = false
   }
