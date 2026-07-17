@@ -5,10 +5,12 @@ from typing import List
 
 from fastapi import APIRouter, HTTPException
 
-from app.agent import chat_with_advisor, generate_emotion
+from app.agent import chat_with_advisor, generate_emotion, interpret_advice
 from app.config import settings
 from app.database import get_db, gen_id, now_str
 from app.models import (
+    AdviceInterpretRequest,
+    AdviceInterpretResponse,
     ChatMessage,
     ChatRequest,
     ChatResponse,
@@ -108,5 +110,30 @@ async def emotion(req: EmotionRequest):
             market_value=data["marketValue"],
         )
         return EmotionResponse(**result)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+# ==================== AI 操作建议解读 ====================
+
+@router.post("/advice/interpret", response_model=AdviceInterpretResponse)
+async def interpret(req: AdviceInterpretRequest):
+    """AI 解读规则引擎的操作建议"""
+    if not settings.llm_configured:
+        raise HTTPException(
+            status_code=503,
+            detail="服务端未配置 LLM API Key，请在 .env 文件中设置 LLM_API_KEY",
+        )
+
+    try:
+        data = req.model_dump(by_alias=True)
+        text = interpret_advice(
+            fund_name=data["fundName"],
+            fund_data=data["fundData"],
+            rule_result=data["ruleResult"],
+            warning=data.get("warning"),
+            config_info=data.get("configInfo"),
+        )
+        return AdviceInterpretResponse(interpretation=text)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))

@@ -61,6 +61,9 @@ export const api = {
   // 情绪
   generateEmotion: (data) => http.post('/emotion', data),
 
+  // AI 解读
+  interpretAdvice: (data) => http.post('/advice/interpret', data),
+
   // 快照
   getSnapshots: (fundId) => http.get('/snapshots/' + fundId),
   saveSnapshot: (data) => http.post('/snapshots', data),

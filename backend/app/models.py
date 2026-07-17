@@ -106,6 +106,20 @@ class EmotionResponse(BaseModel):
     lines: List[str]
 
 
+# ==================== AI 解读 ====================
+
+class AdviceInterpretRequest(BaseModel):
+    fund_name: str = Field("", alias="fundName")
+    fund_data: dict = Field(default_factory=dict, alias="fundData")
+    rule_result: dict = Field(default_factory=dict, alias="ruleResult")
+    warning: Optional[dict] = None
+    config_info: Optional[dict] = Field(None, alias="configInfo")
+
+
+class AdviceInterpretResponse(BaseModel):
+    interpretation: str
+
+
 # ==================== 快照 ====================
 
 class SnapshotCreate(BaseModel):

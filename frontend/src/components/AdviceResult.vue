@@ -15,6 +15,17 @@
         </van-button>
         <van-button round plain size="small" @click="$emit('close')">关闭</van-button>
       </div>
+      <!-- AI 解读 -->
+      <div class="ai-interpret-section">
+        <van-button
+          v-if="!interpretText && !interpretLoading"
+          round plain size="small" color="#8b5cf6"
+          @click="fetchInterpretation"
+        >🤖 AI 解读</van-button>
+        <van-loading v-if="interpretLoading" size="16" class="interpret-loading" />
+        <div v-if="interpretText" class="interpret-text">{{ interpretText }}</div>
+        <div v-if="interpretError" class="interpret-error" @click="fetchInterpretation">⚠️ {{ interpretError }}，点击重试</div>
+      </div>
     </div>
     <!-- 预警面板 -->
     <div class="card">
@@ -64,7 +75,7 @@
 
 <script setup>
 import { ref, computed, inject, watch } from 'vue'
-import { fmtNum, fmtSigned } from '../utils/helpers'
+import { fmtNum, fmtSigned, daysBetween } from '../utils/helpers'
 import { calcSafetyCushion, calcStressTest, getMoodStyle } from '../utils/engine'
 import { api } from '../api'
 import { askConfirm, showError } from '../utils/dialog'
@@ -78,6 +89,11 @@ const emotionLoading = ref(false)
 const emotionTitle = ref('AI 正在生成情绪文案...')
 const emotionLines = ref([])
 
+// AI 解读相关
+const interpretLoading = ref(false)
+const interpretText = ref('')
+const interpretError = ref('')
+
 const mood = computed(() => data.value ? getMoodStyle(data.value.todayChange, data.value.totalReturn) : { emoji: '😐', cardClass: 'emotion-down-slight' })
 const profit = computed(() => data.value ? calcSafetyCushion(data.value.fund, data.value.todayChange) : { todayProfit: 0 })
 const breakDrop = computed(() => data.value?.warning?.breakEvenDrop != null ? data.value.warning.breakEvenDrop.toFixed(2) : '--')
@@ -86,8 +102,57 @@ const recoveryDisplay = computed(() => data.value?.recoveryNeeded != null ? data
 const stress = computed(() => data.value ? calcStressTest(data.value.fund, stressDrop.value) : { simMarketValue: 0, simReturnRate: 0, simLoss: 0, recoveryText: '' })
 
 watch(data, (d) => {
-  if (d) { stressDrop.value = -5; fetchEmotion(d) }
+  if (d) { stressDrop.value = -5; fetchEmotion(d); resetInterpretation() }
 }, { immediate: true })
+
+function resetInterpretation() {
+  interpretText.value = ''
+  interpretError.value = ''
+}
+
+async function fetchInterpretation() {
+  const d = data.value
+  if (!d) return
+  interpretLoading.value = true
+  interpretError.value = ''
+  try {
+    const fund = d.fund
+    const config = store.config
+    const r = await api.interpretAdvice({
+      fundName: fund.name,
+      fundData: {
+        marketValue: fund.currentMarketValue,
+        todayChange: d.todayChange,
+        totalReturn: d.totalReturn,
+        holdDays: daysBetween(fund.buyDate),
+      },
+      ruleResult: {
+        type: d.result.type,
+        title: d.result.title,
+        message: d.result.message,
+        actionType: d.result.actionType,
+        actionAmount: d.result.actionAmount,
+      },
+      warning: {
+        safetyCushion: d.safetyCushion,
+        breakEvenDrop: d.warning?.breakEvenDrop,
+        recoveryNeeded: d.recoveryNeeded,
+        level: d.warning?.level,
+      },
+      configInfo: {
+        stopProfitLine: config.stopProfitLine,
+        stopLossLine: config.stopLossLine,
+        addPositionLine: config.addPositionLine,
+        trailingStop: config.trailingStop,
+      },
+    })
+    interpretText.value = r.interpretation
+  } catch (e) {
+    interpretError.value = e.message || 'AI 解读失败'
+  } finally {
+    interpretLoading.value = false
+  }
+}
 
 async function fetchEmotion(d) {
   emotionLoading.value = true
@@ -117,3 +182,88 @@ function formatMessage(msg) {
   return msg.replace(/\n/g, '<br>')
 }
 </script>
+
+<style scoped>
+/* 入场动画 */
+@keyframes fadeInUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.animate-result { animation: fadeInUp .3s ease; }
+
+/* 操作建议卡片 */
+.advice-card {
+  border-radius: 12px; padding: 1.25rem; font-weight: 600;
+  font-size: 0.95rem; line-height: 1.7; position: relative; overflow: hidden;
+}
+.advice-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; border-radius: 2px; }
+.advice-extreme { background: #fef2f2; border: 1px solid #fecaca; }
+.advice-extreme::before { background: #ef4444; }
+.advice-sell { background: #fefce8; border: 1px solid #fde68a; }
+.advice-sell::before { background: #eab308; }
+.advice-buy { background: #f0fdf4; border: 1px solid #bbf7d0; }
+.advice-buy::before { background: #22c55e; }
+.advice-hold { background: #eff6ff; border: 1px solid #bfdbfe; }
+.advice-hold::before { background: #3b82f6; }
+:global(.dark) .advice-extreme { background: #450a0a; border-color: #7f1d1d; }
+:global(.dark) .advice-sell { background: #422006; border-color: #78350f; }
+:global(.dark) .advice-buy { background: #052e16; border-color: #14532d; }
+:global(.dark) .advice-hold { background: #172554; border-color: #1e3a5f; }
+
+/* 预警卡片 */
+.warning-card { border-radius: 10px; padding: 1rem 1.125rem; position: relative; overflow: hidden; }
+.warning-card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; border-radius: 2px; }
+.warning-low { background: #eff6ff; border: 1px solid #bfdbfe; }
+.warning-low::before { background: #3b82f6; }
+.warning-mid { background: #fff7ed; border: 1px solid #fdba74; }
+.warning-mid::before { background: #f97316; }
+.warning-high { background: #fff7ed; border: 1px solid #fb923c; }
+.warning-high::before { background: #ea580c; }
+.warning-recover { background: #eff6ff; border: 1px solid #bfdbfe; }
+.warning-recover::before { background: #3b82f6; }
+:global(.dark) .warning-low { background: #172554; border-color: #1e3a8a; }
+:global(.dark) .warning-mid { background: #431407; border-color: #c2410c; }
+:global(.dark) .warning-high { background: #431407; border-color: #ea580c; }
+:global(.dark) .warning-recover { background: #172554; border-color: #1e3a5f; }
+
+/* 预警表格 */
+.warn-table { width: 100%; font-size: 0.8rem; border-collapse: collapse; }
+.warn-table td { padding: 0.375rem 0.5rem; border-bottom: 1px solid var(--border-color); }
+.warn-table td:last-child { text-align: right; font-weight: 500; }
+
+/* 情绪卡片 */
+.emotion-card { border-radius: 10px; padding: 1rem 1.125rem; margin-bottom: 0.75rem; position: relative; overflow: hidden; }
+.emotion-card .emotion-lines { font-size: 0.85rem; line-height: 1.8; }
+.emotion-up-big { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border: 1px solid #fcd34d; }
+.emotion-up { background: #f0fdf4; border: 1px solid #bbf7d0; }
+.emotion-down-slight { background: #f8fafc; border: 1px solid #e2e8f0; }
+.emotion-down { background: #fefce8; border: 1px solid #fde68a; }
+.emotion-down-big { background: #fff7ed; border: 1px solid #fed7aa; }
+.emotion-suspect {
+  background: linear-gradient(135deg, #faf5ff 0%, #ede9fe 50%, #fef3c7 100%);
+  border: 2px solid #a855f7;
+  box-shadow: 0 0 20px rgba(168,85,247,.2);
+  animation: shake .5s ease-in-out;
+}
+@keyframes shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+:global(.dark) .emotion-up-big { background: linear-gradient(135deg, #422006, #78350f); border-color: #92400e; }
+:global(.dark) .emotion-up { background: #052e16; border-color: #14532d; }
+:global(.dark) .emotion-down-slight { background: #1e293b; border-color: #334155; }
+:global(.dark) .emotion-down { background: #422006; border-color: #78350f; }
+:global(.dark) .emotion-down-big { background: #450a0a; border-color: #7f1d1d; }
+:global(.dark) .emotion-suspect {
+  background: linear-gradient(135deg, #2e1065, #4c1d95, #713f12);
+  border-color: #8b5cf6;
+  box-shadow: 0 0 30px rgba(139,92,246,.3);
+}
+
+/* AI 解读 */
+.ai-interpret-section { padding: 0 0.75rem 0.75rem 0.75rem; }
+.interpret-loading { margin: 0 auto; }
+.interpret-text {
+  font-size: 0.85rem; line-height: 1.75; color: var(--text-primary);
+  background: linear-gradient(135deg, rgba(139,92,246,.08), rgba(59,130,246,.06));
+  border: 1px solid rgba(139,92,246,.15); border-radius: 10px;
+  padding: 0.75rem 1rem; margin-top: 0.5rem;
+}
+.interpret-error {
+  font-size: 0.8rem; color: #f59e0b; cursor: pointer; margin-top: 0.5rem; text-align: center;
+}
+</style>
