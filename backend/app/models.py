@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 
 class FundBase(BaseModel):
     name: str
+    fund_code: str = Field("", alias="fundCode")
+    fund_shares: float = Field(0, alias="fundShares")
     initial_principal: float = Field(0, alias="initialPrincipal")
     buy_date: str = Field("", alias="buyDate")
     total_buy_amount: float = Field(0, alias="totalBuyAmount")
@@ -29,6 +31,7 @@ class FundUpdate(FundBase):
 
 class FundOut(FundBase):
     id: str
+    last_nav_update: str = Field("", alias="lastNavUpdate")
 
 
 # ==================== 配置 ====================
@@ -56,6 +59,41 @@ class ConfigUpdate(BaseModel):
     peak_return_rate: dict = Field(default_factory=dict, alias="peakReturnRate")
 
     model_config = {"populate_by_name": True}
+
+
+# ==================== 天天基金查询 ====================
+
+class FundQueryResponse(BaseModel):
+    """基金代码查询返回"""
+    code: str
+    name: str
+    date: str           # 净值日期
+    nav: float          # 最新单位净值
+    estimated_nav: Optional[float] = None  # 实时估算净值
+    estimated_change: Optional[float] = None  # 估算涨跌幅 (%)
+    update_time: Optional[str] = None  # 估值更新时间
+
+
+class AutoUpdateResult(BaseModel):
+    """单只基金自动更新结果（不写入数据库，仅返回计算结果供前端预览）"""
+    fund_id: str = Field("", alias="fundId")
+    fund_name: str = Field("", alias="fundName")
+    fund_code: str = Field("", alias="fundCode")
+    success: bool
+    old_market_value: float = Field(0, alias="oldMarketValue")
+    new_market_value: float = Field(0, alias="newMarketValue")
+    today_change: Optional[float] = Field(None, alias="todayChange")
+    today_profit: Optional[float] = Field(None, alias="todayProfit")
+    calculated_return_rate: Optional[float] = Field(None, alias="calculatedReturnRate")
+    message: str = ""
+
+
+class AutoUpdateResponse(BaseModel):
+    """一键更新净值返回"""
+    updated_count: int = Field(0, alias="updatedCount")
+    failed_count: int = Field(0, alias="failedCount")
+    skipped_count: int = Field(0, alias="skippedCount")
+    results: List[AutoUpdateResult] = Field(default_factory=list)
 
 
 # ==================== 操作历史 ====================

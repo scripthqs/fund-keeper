@@ -93,6 +93,17 @@ function saveSnapshot(fid, sc, rn, tc, tr) {
   api.saveSnapshot({ fundId: fid, safetyCushion: sc, recoveryNeeded: rn, todayChange: tc, totalReturn: tr }).catch(() => {})
 }
 
+async function queryFund(code) {
+  const info = await api.queryFund(code)
+  return info
+}
+
+async function autoUpdateNav() {
+  const result = await api.autoUpdateNav()
+  // 预览模式：不直接更新本地基金数据，由 DailyAnalysis 组件处理展示
+  return result
+}
+
 function buildFundContext() {
   if (funds.value.length === 0) return '用户当前还没有添加任何基金持仓。'
   let ctx = '以下是用户当前的基金持仓数据：\n'
@@ -118,5 +129,6 @@ export function useStore() {
     loadAll, createFund, updateFund, removeFund, executeAction,
     saveConfig, updatePeakReturn, clearHistory,
     sendChatMessage, clearChat, saveSnapshot, buildFundContext,
+    queryFund, autoUpdateNav,
   }
 }

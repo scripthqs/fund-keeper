@@ -8,6 +8,7 @@ import {
   Field, Cell, CellGroup, Checkbox,
   ActionSheet, Popup, Dialog, Notify,
   DropdownMenu, DropdownItem, Calendar,
+  Collapse, CollapseItem, Form, SwipeCell,
 } from 'vant'
 
 const app = createApp(App)
@@ -15,4 +16,5 @@ app.use(Button).use(Tag).use(Loading).use(Slider)
   .use(Field).use(Cell).use(CellGroup).use(Checkbox)
   .use(ActionSheet).use(Popup).use(Dialog).use(Notify)
   .use(DropdownMenu).use(DropdownItem).use(Calendar)
+  .use(Collapse).use(CollapseItem).use(Form).use(SwipeCell)
 app.mount('#app')

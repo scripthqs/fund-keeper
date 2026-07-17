@@ -29,11 +29,10 @@
         <!-- 左列 -->
         <div class="lg:col-span-1 space-y-4 order-3 lg:order-1">
           <ConfigPanel />
-          <FundList />
         </div>
         <!-- 中列 -->
         <div class="lg:col-span-1 space-y-4 order-1 lg:order-2">
-          <DailyAnalysis />
+          <DailyAnalysis @add-fund="openFundModal(null)" />
           <AdviceResult v-if="showAdvice" @close="showAdvice = false" @action-done="showAdvice = false" />
         </div>
         <!-- 右列 -->
@@ -59,7 +58,6 @@
 import { ref, computed, onMounted, onUnmounted, provide } from 'vue'
 import { useStore } from './composables/useStore'
 import ConfigPanel from './components/ConfigPanel.vue'
-import FundList from './components/FundList.vue'
 import FundModal from './components/FundModal.vue'
 import DailyAnalysis from './components/DailyAnalysis.vue'
 import AdviceResult from './components/AdviceResult.vue'
@@ -78,8 +76,12 @@ const editingFundId = ref(null)
 const analysisData = ref(null)
 
 // 提供给子组件
+function openFundModal(id) {
+  editingFundId.value = id
+  fundModalVisible.value = true
+}
 provide('store', store)
-provide('openFundModal', (id) => { editingFundId.value = id; fundModalVisible.value = true })
+provide('openFundModal', openFundModal)
 provide('closeFundModal', () => fundModalVisible.value = false)
 provide('editingFundId', editingFundId)
 provide('showAdvice', showAdvice)

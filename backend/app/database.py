@@ -18,6 +18,14 @@ def get_db() -> sqlite3.Connection:
     return conn
 
 
+def _migrate_columns(cursor: sqlite3.Cursor, table: str, columns: list[tuple[str, str]]):
+    """安全添加列（兼容旧数据库）"""
+    existing = {row[1] for row in cursor.execute(f"PRAGMA table_info({table})")}
+    for col_name, col_def in columns:
+        if col_name not in existing:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def}")
+
+
 def init_db():
     """初始化数据库表结构"""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -29,6 +37,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS funds (
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
+            fund_code TEXT DEFAULT '',
+            fund_shares REAL DEFAULT 0,
             initial_principal REAL DEFAULT 0,
             buy_date TEXT DEFAULT '',
             total_buy_amount REAL DEFAULT 0,
@@ -38,6 +48,13 @@ def init_db():
             created_at TEXT DEFAULT ''
         )
     """)
+
+    # 兼容旧数据库：添加 fund_code 和 fund_shares 列（如果不存在）
+    _migrate_columns(cursor, "funds", [
+        ("fund_code", "TEXT DEFAULT ''"),
+        ("fund_shares", "REAL DEFAULT 0"),
+        ("last_nav_update", "TEXT DEFAULT ''"),
+    ])
 
     # 配置表（单行，id 固定为 'default'）
     cursor.execute("""

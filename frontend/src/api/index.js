@@ -39,6 +39,9 @@ export const api = {
   updateFund: (id, fund) => http.put('/funds/' + id, fund),
   deleteFund: (id) => http.delete('/funds/' + id),
   executeAction: (data) => http.post('/funds/action', data),
+  // 天天基金 API
+  queryFund: (code) => http.get('/funds/query-fund', { params: { code } }),
+  autoUpdateNav: () => http.post('/funds/auto-update'),
 
   // 配置
   getConfig: () => http.get('/config'),
