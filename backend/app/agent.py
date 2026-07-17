@@ -229,12 +229,13 @@ def interpret_advice(
             if items:
                 config_text = "投资规则：" + "，".join(items) + "\n"
 
+        warn_display = warn_text or "无特殊预警"
         user_message = (
             f"以下是一只基金的规则引擎分析结果，请帮我解读：\n\n"
             f"{fund_text}\n"
             f"{config_text}\n"
             f"【规则分析结果】\n{result_text}\n"
-            f"【预警数据】\n{warn_text or '无特殊预警\n'}"
+            f"【预警数据】\n{warn_display}\n"
             f"请用200字以内解读这个结果。"
         )
 
