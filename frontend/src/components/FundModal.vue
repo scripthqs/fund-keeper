@@ -111,8 +111,9 @@ async function closeWithConfirm() {
   saving.value = true
   try {
     const data = { ...form.value, totalBuyAmount: form.value.totalBuyAmount || form.value.initialPrincipal, currentMarketValue: form.value.currentMarketValue || form.value.initialPrincipal }
-    // 自动计算总收益率
-    data.currentReturnRate = autoReturnRate.value ?? 0
+    // 自动计算总收益率（基于处理后的有效买入金额和市值）
+    const profit = B(data.currentMarketValue || 0).minus(data.totalBuyAmount).plus(data.totalSellAmount || 0)
+    data.currentReturnRate = data.totalBuyAmount > 0 ? round(profit.div(data.totalBuyAmount).times(100)) : 0
     if (editingFundId.value) await store.updateFund(editingFundId.value, data)
     else await store.createFund(data)
     hasInteracted.value = false

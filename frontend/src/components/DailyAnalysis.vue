@@ -251,17 +251,19 @@ function applySuggestedProfit() {
 
 watch(selectedFundId, () => {
   const fund = selectedFund.value
-  const tc = todayChange.value
-  if (!fund || tc == null || isNaN(tc)) {
-    autoFilled.value = false
-    // 未录入今日数据时，显示基金当前已有的总收益率
-    totalReturn.value = fund ? fund.currentReturnRate : null
-  }
-  todayProfit.value = null
-  todayChange.value = null
+  autoFilled.value = false
   profitManuallySet.value = false
   suggestedProfit.value = null
   lastSnapshot.value = null
+  todayProfit.value = null
+  todayChange.value = null
+  if (fund && fund.totalBuyAmount > 0) {
+    // 未录入今日数据时，按当前市值和买入金额重新计算总收益率
+    const profit = B(fund.currentMarketValue || 0).minus(fund.totalBuyAmount).plus(fund.totalSellAmount || 0)
+    totalReturn.value = round(profit.div(fund.totalBuyAmount).times(100))
+  } else {
+    totalReturn.value = fund ? fund.currentReturnRate : null
+  }
 })
 
 async function updateFundData() {
