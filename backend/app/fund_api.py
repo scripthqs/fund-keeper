@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import ssl
+from typing import Optional
 
 import httpx
 
@@ -34,7 +35,7 @@ HEADERS = {
 }
 
 # 使用 httpx AsyncClient 复用连接
-_client: httpx.AsyncClient | None = None
+_client: Optional[httpx.AsyncClient] = None
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -166,7 +167,7 @@ async def query_fund_by_code(code: str) -> dict:
         ) from e
 
 
-async def get_fund_nav(code: str) -> float | None:
+async def get_fund_nav(code: str) -> Optional[float]:
     """获取基金最新单位净值，简化接口"""
     try:
         info = await query_fund_by_code(code)
@@ -220,7 +221,7 @@ async def get_fund_nav_history(
         return []
 
 
-async def get_fund_nav_on_date(code: str, target_date: str) -> float | None:
+async def get_fund_nav_on_date(code: str, target_date: str) -> Optional[float]:
     """
     获取基金在指定日期的单位净值（用于计算买入份额）
 
@@ -262,7 +263,7 @@ async def get_fund_nav_on_date(code: str, target_date: str) -> float | None:
     return best_nav
 
 
-async def get_fund_name(code: str) -> str | None:
+async def get_fund_name(code: str) -> Optional[str]:
     """
     从东方财富获取基金名称（备用方案）
     从基金详情页 JS 数据中解析名称
