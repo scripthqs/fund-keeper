@@ -6,6 +6,7 @@ import { ref, reactive, computed } from 'vue'
 import { api } from '../api'
 import { DEFAULT_CONFIG } from '../utils/constants'
 import { uuid, daysBetween, fmtNum, fmtSigned } from '../utils/helpers'
+import { B, round } from '../utils/bigMath'
 
 const config = reactive({ ...DEFAULT_CONFIG })
 const funds = ref([])
@@ -21,7 +22,7 @@ const totalPrincipal = computed(() => funds.value.reduce((s, f) => s + f.initial
 const totalMarketValue = computed(() => funds.value.reduce((s, f) => s + f.currentMarketValue, 0))
 const totalBuy = computed(() => funds.value.reduce((s, f) => s + f.totalBuyAmount, 0))
 const totalSell = computed(() => funds.value.reduce((s, f) => s + f.totalSellAmount, 0))
-const totalReturnRate = computed(() => totalBuy.value > 0 ? ((totalMarketValue.value - totalBuy.value + totalSell.value) / totalBuy.value) * 100 : 0)
+const totalReturnRate = computed(() => totalBuy.value > 0 ? round(B(totalMarketValue.value).minus(totalBuy.value).plus(totalSell.value).div(totalBuy.value).times(100), 4) : 0)
 
 async function loadAll() {
   loading.value = true
