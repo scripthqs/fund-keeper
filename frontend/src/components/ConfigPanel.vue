@@ -31,9 +31,11 @@
           <van-cell title="取消" clickable class="text-center" style="color:var(--text-secondary)" @click="showModePicker = false" />
         </van-action-sheet>
         <van-field v-if="c.addPositionMode === 'single'" v-model.number="c.addPositionLine" label="加仓触发线 (%)" type="number" @change="save" />
-        <div v-if="c.addPositionMode === 'multi'" class="p-3 grid grid-cols-2 gap-2">
-          <van-field v-for="(t, i) in c.addTiers" :key="i" v-model.number="t.line" :label="`第${i+1}档线(%)`" type="number" size="small" @change="save" />
-          <van-field v-for="(t, i) in c.addTiers" :key="'r'+i" v-model.number="t.ratio" :label="`买入比例(%)`" type="number" size="small" @change="save" />
+        <div v-if="c.addPositionMode === 'multi'" class="tier-grid p-3 grid grid-cols-2 gap-2">
+          <template v-for="(t, i) in c.addTiers" :key="i">
+            <van-field v-model.number="t.line" :label="`第${i+1}档(%)`" type="number" size="small" @change="save" />
+            <van-field v-model.number="t.ratio" :label="`买入(%)`" type="number" size="small" @change="save" />
+          </template>
         </div>
       </van-cell-group>
 
@@ -113,3 +115,13 @@ async function save() {
   catch (e) { console.error('配置保存失败:', e) }
 }
 </script>
+
+<style scoped>
+:deep(.van-field__label) {
+  width: 8em !important;
+  white-space: nowrap;
+}
+.tier-grid :deep(.van-field__label) {
+  width: 5.5em !important;
+}
+</style>

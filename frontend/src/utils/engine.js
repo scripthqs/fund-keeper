@@ -10,9 +10,23 @@ import { B, mulDiv, percentGrow, percentReverse, round, toNum } from './bigMath'
 export function analyzeFundEnhanced(fund, todayChange, totalReturn, config, peakReturnRate) {
   const holdDays = daysBetween(fund.buyDate)
 
-  // 规则0：极端行情
+  // 规则0：极端行情（仅在尚未触发止损/加仓时生效，避免挡住连跌多天的合理操作）
   if (Math.abs(todayChange) >= config.extremeVolatility) {
-    return { type: 'extreme', title: '⚠️ 极端波动', message: `今日涨跌幅 ${fmtSigned(todayChange)}%，超过极端波动线 ±${config.extremeVolatility}%，按规则不操作，请明天再评估。`, cssClass: 'advice-extreme', actionAmount: null }
+    // 已触发止损线 → 继续止损流程
+    const hitStopLoss = config.enableStopLoss && totalReturn <= config.stopLossLine
+    // 已在加仓区域 → 即使当日暴跌也应该继续评估加仓（连跌多天后单日再暴跌，反而是好买点）
+    let hitBuyZone = false
+    if (!hitStopLoss) {
+      if (config.addPositionMode === 'multi' && config.addTiers?.length) {
+        hitBuyZone = totalReturn <= Math.max(...config.addTiers.map(t => t.line))
+      } else {
+        hitBuyZone = totalReturn <= config.addPositionLine
+      }
+    }
+    // 既没触发止损也没进入加仓区 → 纯粹的单日极端波动，暂停操作
+    if (!hitStopLoss && !hitBuyZone) {
+      return { type: 'extreme', title: '⚠️ 极端波动', message: `今日涨跌幅 ${fmtSigned(todayChange)}%，超过极端波动线 ±${config.extremeVolatility}%，按规则不操作，请明天再评估。`, cssClass: 'advice-extreme', actionAmount: null }
+    }
   }
 
   // 规则0.5：止损
