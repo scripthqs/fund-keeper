@@ -7,7 +7,7 @@
     :close-on-click-overlay="false"
     @click-overlay="closeWithConfirm"
   >
-    <div class="flex flex-col h-full">
+    <div class="flex flex-col h-full relative">
       <div class="flex items-center justify-between p-4 border-b flex-shrink-0" style="border-color:var(--border-color)">
         <h3 class="font-semibold">{{ editingFundId ? '编辑基金' : '添加基金' }}</h3>
         <van-button round plain size="small" @click="closeWithConfirm">✕</van-button>
@@ -127,7 +127,7 @@
           <van-cell-group inset style="margin-top:12px">
             <div class="flex items-center justify-between px-3 py-2">
               <span class="text-sm font-medium" style="color:var(--text-primary)">📊 加仓档位配置（覆盖全局）</span>
-              <van-button size="mini" round plain type="primary" :loading="aiRecommending || autoFetching" @click="aiRecommend">🤖 AI 推荐</van-button>
+              <van-button size="mini" round plain type="primary" :loading="aiRecommending" @click="aiRecommend">🤖 AI 推荐</van-button>
             </div>
 
             <van-field
@@ -212,7 +212,6 @@ const aiExplanation = ref('')
 const macroAnalysis = ref(null)
 const strategyStyle = ref('')
 const hasInteracted = ref(false)
-const autoFetching = ref(false)  // 展开基金时自动获取涨跌幅的加载状态
 const visible = ref(true)
 const showCalendar = ref(false)
 const formRef = ref(null)
@@ -363,29 +362,6 @@ watch(editingFundId, async (id) => {
         stopProfitRatio: fund.stopProfitRatio ?? 0,
         stopLossRatio: fund.stopLossRatio ?? 0,
       })
-      // 自动获取今日涨跌幅（不自动触发 AI 推荐）
-      if (fund.fundCode && /^\d{6}$/.test(fund.fundCode)) {
-        autoFetching.value = true
-        try {
-          const info = await store.queryFund(fund.fundCode)
-          if (info && info.estimated_change != null) {
-            // 应用今日涨跌幅到当前市值
-            const newMarket = round(
-              B(fund.currentMarketValue).times(
-                B(1).plus(B(info.estimated_change).div(100))
-              )
-            )
-            form.value.currentMarketValue = newMarket
-            // 同步更新收益率
-            const profit = B(newMarket).minus(fund.totalBuyAmount).plus(fund.totalSellAmount || 0)
-            form.value.currentReturnRate = fund.totalBuyAmount > 0 ? round(profit.div(fund.totalBuyAmount).times(100)) : 0
-          }
-        } catch (e) {
-          console.error('自动获取今日涨跌幅失败:', e.message)
-        } finally {
-          autoFetching.value = false
-        }
-      }
       // 编辑模式：保存初始快照，用于后续检测是否有实际修改
       formSnapshot.value = JSON.parse(JSON.stringify(form.value))
     }
