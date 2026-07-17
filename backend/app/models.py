@@ -183,3 +183,9 @@ class ExecuteActionRequest(BaseModel):
     reason_type: str = Field("", alias="reasonType")
     is_max: bool = Field(False, alias="isMax")
     note: str = Field("", alias="note")  # 手动操作自定义备注
+
+
+class ExecuteActionResponse(BaseModel):
+    ok: bool
+    fund: FundOut
+

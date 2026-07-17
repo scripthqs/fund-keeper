@@ -63,7 +63,7 @@ async function executeAction(fundId, actionType, amount, reasonType, isMax, note
     const i = funds.value.findIndex(f => f.id === fundId)
     if (i >= 0) Object.assign(funds.value[i], r.fund)
     const displayNote = note || (reasonMap[reasonType] || '') + (isMax ? '（上限）' : '')
-    history.value.unshift({ id: uuid(), date: new Date().toISOString().split('T')[0], fundName: r.fund.name, type: actionType, amount, returnRate: r.fund.currentReturnRate, note: displayNote })
+    history.value.unshift({ id: uuid(), date: new Date().toISOString().split('T')[0], fundName: r.fund.name, type: actionType, amount, returnRate: r.fund.currentReturnRate ?? r.fund.current_return_rate ?? 0, note: displayNote })
   }
   return r
 }

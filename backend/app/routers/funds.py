@@ -7,9 +7,10 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.database import get_db, gen_id, now_str, today_str
 from app.models import (
-    FundCreate, FundOut, FundUpdate, ExecuteActionRequest,
+    FundCreate, FundOut, FundUpdate, ExecuteActionRequest, ExecuteActionResponse,
     FundQueryResponse, AutoUpdateResult, AutoUpdateResponse,
 )
+
 from app.fund_api import query_fund_by_code, get_fund_nav_on_date
 
 logger = logging.getLogger(__name__)
@@ -213,8 +214,9 @@ async def auto_update_nav():
     )
 
 
-@router.post("/action")
+@router.post("/action", response_model=ExecuteActionResponse)
 async def execute_action(req: ExecuteActionRequest):
+
     """执行买入/卖出操作，更新基金数据并记录历史"""
     conn = get_db()
     fund = conn.execute(
