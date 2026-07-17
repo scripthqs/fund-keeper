@@ -190,7 +190,7 @@ async function fetchEmotion(d) {
 }
 
 async function exec() {
-  if (!editAmount.value || editAmount.value <= 0) { await import('../utils/dialog').then(m => m.showTip('请输入有效的操作金额')); return }
+  if (!editAmount.value || editAmount.value <= 0) { showTip('请输入有效的操作金额'); return }
   const actionType = data.value.result.actionType
   const amount = editAmount.value
   const reasonType = data.value.result.type
