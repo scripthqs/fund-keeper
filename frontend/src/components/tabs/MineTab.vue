@@ -1,51 +1,53 @@
 <template>
-  <div class="tab-page">
-    <!-- 用户信息区域 -->
-    <div class="user-card">
-      <div class="avatar">{{ avatarText }}</div>
-      <div class="user-info">
-        <h3 class="user-name">理财小助理用户</h3>
-        <p class="user-desc">理性投资，稳健致远</p>
+  <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
+    <div class="tab-page">
+      <!-- 用户信息区域 -->
+      <div class="user-card">
+        <div class="avatar">{{ avatarText }}</div>
+        <div class="user-info">
+          <h3 class="user-name">理财小助理用户</h3>
+          <p class="user-desc">理性投资，稳健致远</p>
+        </div>
       </div>
-    </div>
 
-    <!-- 数据统计 -->
-    <div class="stats-grid">
-      <div class="stat-item">
-        <div class="stat-value">{{ fundCount }}</div>
-        <div class="stat-label">持仓基金</div>
+      <!-- 数据统计 -->
+      <div class="stats-grid">
+        <div class="stat-item">
+          <div class="stat-value">{{ fundCount }}</div>
+          <div class="stat-label">持仓基金</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value">¥{{ totalMarketValueText }}</div>
+          <div class="stat-label">持仓市值</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value">{{ tradeCount }}</div>
+          <div class="stat-label">操作记录</div>
+        </div>
       </div>
-      <div class="stat-item">
-        <div class="stat-value">¥{{ totalMarketValueText }}</div>
-        <div class="stat-label">持仓市值</div>
-      </div>
-      <div class="stat-item">
-        <div class="stat-value">{{ tradeCount }}</div>
-        <div class="stat-label">操作记录</div>
-      </div>
-    </div>
 
-    <!-- 功能菜单 -->
-    <div class="menu-section">
-      <div class="menu-title">功能</div>
-      <div class="menu-item" @click="toggleTheme">
-        <span class="menu-icon">{{ isDark ? '☀️' : '🌙' }}</span>
-        <span class="menu-label">{{ isDark ? '浅色模式' : '深色模式' }}</span>
-        <span class="menu-arrow">›</span>
-      </div>
-      <div class="menu-item" @click="refreshData">
-        <span class="menu-icon">🔄</span>
-        <span class="menu-label">刷新数据</span>
-        <span class="menu-arrow">›</span>
-      </div>
-      <div class="menu-item">
-        <span class="menu-icon">ℹ️</span>
-        <span class="menu-label">关于</span>
-        <span class="menu-arrow">›</span>
-        <span class="menu-value">v1.0.0</span>
+      <!-- 功能菜单 -->
+      <div class="menu-section">
+        <div class="menu-title">功能</div>
+        <div class="menu-item" @click="toggleTheme">
+          <span class="menu-icon">{{ isDark ? '☀️' : '🌙' }}</span>
+          <span class="menu-label">{{ isDark ? '浅色模式' : '深色模式' }}</span>
+          <span class="menu-arrow">›</span>
+        </div>
+        <div class="menu-item" @click="refreshData">
+          <span class="menu-icon">🔄</span>
+          <span class="menu-label">刷新数据</span>
+          <span class="menu-arrow">›</span>
+        </div>
+        <div class="menu-item">
+          <span class="menu-icon">ℹ️</span>
+          <span class="menu-label">关于</span>
+          <span class="menu-arrow">›</span>
+          <span class="menu-value">v1.0.0</span>
+        </div>
       </div>
     </div>
-  </div>
+  </van-pull-refresh>
 </template>
 
 <script setup>
@@ -54,10 +56,16 @@ import { inject, ref, computed } from 'vue'
 const store = inject('store')
 
 const isDark = ref(document.documentElement.classList.contains('dark'))
+const refreshing = ref(false)
 
 function toggleTheme() {
   isDark.value = !isDark.value
   document.documentElement.classList.toggle('dark', isDark.value)
+}
+
+async function onRefresh() {
+  await store.refreshForTab('mine')
+  refreshing.value = false
 }
 
 async function refreshData() {

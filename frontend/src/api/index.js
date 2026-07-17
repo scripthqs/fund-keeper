@@ -71,6 +71,9 @@ export const api = {
   // 撤回
   undoAction: (historyId) => http.post('/funds/undo/' + historyId),
 
+  // AI 推荐加仓档位
+  aiRecommendTiers: (data) => http.post('/funds/ai-recommend-tiers', data),
+
   // 聊天
   getChatMessages: () => http.get('/chat/messages'),
   clearChatMessages: () => http.delete('/chat/messages'),

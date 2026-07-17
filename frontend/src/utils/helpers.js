@@ -38,8 +38,3 @@ export function escapeHtml(str) {
   div.textContent = str
   return div.innerHTML
 }
-
-/** 今天的日期 YYYY-MM-DD */
-export function todayStr() {
-  return new Date().toISOString().split('T')[0]
-}

@@ -9,7 +9,7 @@ import {
   ActionSheet, Popup, Dialog, Notify,
   DropdownMenu, DropdownItem, Calendar,
   Collapse, CollapseItem, Form, SwipeCell,
-  Tabbar, TabbarItem,
+  Tabbar, TabbarItem, PullRefresh,
 } from 'vant'
 
 const app = createApp(App)
@@ -18,5 +18,5 @@ app.use(Button).use(Tag).use(Loading).use(Slider)
   .use(ActionSheet).use(Popup).use(Dialog).use(Notify)
   .use(DropdownMenu).use(DropdownItem).use(Calendar)
   .use(Collapse).use(CollapseItem).use(Form).use(SwipeCell)
-  .use(Tabbar).use(TabbarItem)
+  .use(Tabbar).use(TabbarItem).use(PullRefresh)
 app.mount('#app')

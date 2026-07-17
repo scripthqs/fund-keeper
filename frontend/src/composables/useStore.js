@@ -24,7 +24,147 @@ const totalBuy = computed(() => funds.value.reduce((s, f) => s + f.totalBuyAmoun
 const totalSell = computed(() => funds.value.reduce((s, f) => s + f.totalSellAmount, 0))
 const totalReturnRate = computed(() => totalBuy.value > 0 ? round(B(totalMarketValue.value).minus(totalBuy.value).plus(totalSell.value).div(totalBuy.value).times(100), 4) : 0)
 
+// ---- 数据加载状态追踪，避免重复请求 ----
+const _fundsLoaded = ref(false)
+const _configLoaded = ref(false)
+const _snapshotsLoaded = ref(false)
+const _historyLoaded = ref(false)
+const _chatLoaded = ref(false)
+const _healthLoaded = ref(false)
+
+function _resetLoadFlags() {
+  _fundsLoaded.value = false
+  _configLoaded.value = false
+  _snapshotsLoaded.value = false
+  _historyLoaded.value = false
+  _chatLoaded.value = false
+  _healthLoaded.value = false
+}
+
+/** 加载基金列表 + 配置（被多个 tab 共用） */
+async function loadFundsAndConfig() {
+  const needFunds = !_fundsLoaded.value
+  const needConfig = !_configLoaded.value
+  if (!needFunds && !needConfig) return
+
+  const promises = []
+  if (needFunds) promises.push(api.getFunds().catch(() => []))
+  if (needConfig) promises.push(api.getConfig().catch(() => ({ ...DEFAULT_CONFIG })))
+
+  const results = await Promise.all(promises)
+  let ri = 0
+  if (needFunds) {
+    funds.value = results[ri++]
+    _fundsLoaded.value = true
+  }
+  if (needConfig) {
+    Object.assign(config, DEFAULT_CONFIG, results[ri])
+    _configLoaded.value = true
+  }
+}
+
+/** 加载快照（仅持仓 tab 需要） */
+async function loadSnapshots() {
+  if (_snapshotsLoaded.value) return
+  for (const f of funds.value) {
+    try {
+      const snaps = await api.getSnapshots(f.id)
+      dailySnapshots.value[f.id] = snaps.map(s => ({
+        date: s.date, safetyCushion: s.safetyCushion,
+        recoveryNeeded: s.recoveryNeeded, todayChange: s.todayChange,
+        totalReturn: s.totalReturn,
+      }))
+    } catch {}
+  }
+  _snapshotsLoaded.value = true
+}
+
+/** 加载操作历史（交易 / 我的 tab 需要） */
+async function loadHistoryData() {
+  if (_historyLoaded.value) return
+  history.value = (await api.getHistory().catch(() => [])).map(h => ({ ...h, canUndo: !!h.snapshot_before }))
+  _historyLoaded.value = true
+}
+
+/** 加载聊天消息 + AI 状态（策略 tab 需要） */
+async function loadChatAndHealth() {
+  const needChat = !_chatLoaded.value
+  const needHealth = !_healthLoaded.value
+  if (!needChat && !needHealth) return
+
+  const promises = []
+  if (needChat) promises.push(api.getChatMessages().catch(() => []))
+  if (needHealth) promises.push(api.health().catch(() => ({ llm_configured: false, model: '' })))
+
+  const results = await Promise.all(promises)
+  let ri = 0
+  if (needChat) {
+    chatMessages.value = results[ri++]
+    _chatLoaded.value = true
+  }
+  if (needHealth) {
+    const health = results[ri]
+    aiStatus.value = { configured: health.llm_configured, model: health.model, connected: true }
+    _healthLoaded.value = true
+  }
+}
+
+/** 按 Tab 按需加载数据 */
+async function loadForTab(tabName, showLoading = false) {
+  if (showLoading) loading.value = true
+  try {
+    switch (tabName) {
+      case 'holdings':
+      case 'trade':        // 交易 tab 也需要基金列表做选择器
+        await Promise.all([loadFundsAndConfig(), tabName === 'holdings' ? loadSnapshots() : loadHistoryData()])
+        break
+      case 'strategy':
+        await Promise.all([loadFundsAndConfig(), loadChatAndHealth()])
+        break
+      case 'mine':
+        await Promise.all([loadFundsAndConfig(), loadHistoryData()])
+        break
+    }
+  } catch (e) {
+    console.error('加载数据失败:', e)
+    aiStatus.value.connected = false
+  } finally {
+    if (showLoading) loading.value = false
+  }
+}
+
+/** 下拉刷新：重置当前 Tab 的缓存标志，强制重新请求 */
+async function refreshForTab(tabName) {
+  // 重置该 tab 涉及的数据标志，强制重新拉取最新数据
+  switch (tabName) {
+    case 'holdings':
+      _fundsLoaded.value = false
+      _configLoaded.value = false
+      _snapshotsLoaded.value = false
+      break
+    case 'trade':
+      _fundsLoaded.value = false
+      _configLoaded.value = false
+      _historyLoaded.value = false
+      break
+    case 'strategy':
+      _fundsLoaded.value = false
+      _configLoaded.value = false
+      _chatLoaded.value = false
+      _healthLoaded.value = false
+      break
+    case 'mine':
+      _fundsLoaded.value = false
+      _configLoaded.value = false
+      _historyLoaded.value = false
+      break
+  }
+  await loadForTab(tabName)
+}
+
+/** 保留全量加载（MineTab 的刷新按钮 / 手动刷新使用） */
 async function loadAll() {
+  _resetLoadFlags()
   loading.value = true
   try {
     const [cfg, fundList, hist, chat, health] = await Promise.all([
@@ -45,6 +185,12 @@ async function loadAll() {
         dailySnapshots.value[f.id] = snaps.map(s => ({ date: s.date, safetyCushion: s.safetyCushion, recoveryNeeded: s.recoveryNeeded, todayChange: s.todayChange, totalReturn: s.totalReturn }))
       } catch {}
     }
+    _fundsLoaded.value = true
+    _configLoaded.value = true
+    _snapshotsLoaded.value = true
+    _historyLoaded.value = true
+    _chatLoaded.value = true
+    _healthLoaded.value = true
   } catch (e) {
     console.error('加载数据失败:', e)
     aiStatus.value.connected = false
@@ -53,9 +199,10 @@ async function loadAll() {
   }
 }
 
-async function createFund(data) { const c = await api.createFund(data); funds.value.push(c); return c }
-async function updateFund(id, data) { const u = await api.updateFund(id, data); const i = funds.value.findIndex(f => f.id === id); if (i >= 0) funds.value.splice(i, 1, u); return u }
-async function removeFund(id) { await api.deleteFund(id); funds.value = funds.value.filter(f => f.id !== id) }
+async function refreshFunds() { try { funds.value = await api.getFunds() } catch (e) { console.error('刷新基金列表失败:', e) } }
+async function createFund(data) { await api.createFund(data); await refreshFunds() }
+async function updateFund(id, data) { await api.updateFund(id, data); await refreshFunds() }
+async function removeFund(id) { await api.deleteFund(id); await refreshFunds() }
 
 async function executeAction(fundId, actionType, amount, reasonType, isMax, note) {
   const r = await api.executeAction({ fundId, actionType, amount, reasonType, isMax: !!isMax, note: note || '' })
@@ -137,6 +284,10 @@ function buildFundContext() {
   ctx += `- 单只仓位上限：${config.maxPosition}%\n\n`
   funds.value.forEach(f => {
     ctx += `【${f.name}】\n  初始本金：¥${fmtNum(f.initialPrincipal)} | 当前市值：¥${fmtNum(f.currentMarketValue)}\n  累计买入：¥${fmtNum(f.totalBuyAmount)} | 累计卖出：¥${fmtNum(f.totalSellAmount)}\n  当前收益率：${fmtSigned(f.currentReturnRate)}% | 持有：${daysBetween(f.buyDate)}天 | 买入日期：${f.buyDate}\n`
+    if (f.maxInvestment > 0) ctx += `  投入上限：¥${fmtNum(f.maxInvestment)}\n`
+    if (f.addTiers?.length) ctx += `  加仓档位：${f.addTiers.map(t => t.line + '%→买' + t.ratio + '%').join(' | ')}\n`
+    if (f.stopProfitLine) ctx += `  止盈线：${f.stopProfitLine}%（卖出${f.stopProfitRatio || '?'}%）\n`
+    if (f.stopLossLine) ctx += `  止损线：${f.stopLossLine}%（卖出${f.stopLossRatio || '?'}%）\n`
   })
   ctx += `\n当前日期：${new Date().toLocaleDateString('zh-CN')}`
   return ctx
@@ -146,7 +297,7 @@ export function useStore() {
   return {
     config, funds, history, chatMessages, dailySnapshots, aiStatus, loading,
     totalPrincipal, totalMarketValue, totalBuy, totalSell, totalReturnRate,
-    loadAll, createFund, updateFund, removeFund, executeAction, undoAction,
+    loadAll, loadForTab, refreshForTab, refreshFunds, createFund, updateFund, removeFund, executeAction, undoAction,
     saveConfig, updatePeakReturn, clearHistory,
     sendChatMessage, clearChat, saveSnapshot, buildFundContext,
     queryFund, autoUpdateNav,

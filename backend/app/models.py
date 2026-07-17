@@ -17,8 +17,15 @@ class FundBase(BaseModel):
     total_sell_amount: float = Field(0, alias="totalSellAmount")
     current_market_value: float = Field(0, alias="currentMarketValue")
     current_return_rate: float = Field(0, alias="currentReturnRate")
+    max_investment: float = Field(0, alias="maxInvestment")
+    add_tiers: List[AddTier] = Field(default_factory=list, alias="addTiers")
+    # 基金独立止盈止损（0 表示使用全局配置）
+    stop_profit_line: float = Field(0, alias="stopProfitLine")
+    stop_loss_line: float = Field(0, alias="stopLossLine")
+    stop_profit_ratio: float = Field(0, alias="stopProfitRatio")
+    stop_loss_ratio: float = Field(0, alias="stopLossRatio")
 
-    model_config = {"populate_by_name": True, "serialization_by_alias": True}
+    model_config = {"populate_by_name": True, "by_alias": True}
 
 
 class FundCreate(FundBase):
@@ -106,7 +113,7 @@ class HistoryCreate(BaseModel):
     return_rate: float = Field(0, alias="returnRate")
     note: str = ""
 
-    model_config = {"serialization_by_alias": True}
+    model_config = {"by_alias": True}
 
 
 class HistoryOut(HistoryCreate):
@@ -167,7 +174,7 @@ class SnapshotCreate(BaseModel):
     today_change: float = Field(0, alias="todayChange")
     total_return: float = Field(0, alias="totalReturn")
 
-    model_config = {"serialization_by_alias": True}
+    model_config = {"by_alias": True}
 
 
 class SnapshotOut(SnapshotCreate):
@@ -189,4 +196,39 @@ class ExecuteActionResponse(BaseModel):
     ok: bool
     fund: FundOut
     history_id: str = Field("", alias="historyId")
+
+
+# ==================== AI 推荐加仓档位 ====================
+
+class TierRecommendRequest(BaseModel):
+    fund_name: str = Field("", alias="fundName")
+    total_buy_amount: float = Field(0, alias="totalBuyAmount")
+    initial_principal: float = Field(0, alias="initialPrincipal")
+    max_investment: float = Field(0, alias="maxInvestment")
+    current_return_rate: float = Field(0, alias="currentReturnRate")
+    current_market_value: float = Field(0, alias="currentMarketValue")
+    hold_days: int = Field(0, alias="holdDays")
+
+    model_config = {"populate_by_name": True}
+
+
+class MacroAnalysisResult(BaseModel):
+    """宏观政策分析结果"""
+    sector: str = ""                    # 所属行业/赛道
+    policy_score: int = Field(50, alias="policyScore")       # 政策支持评分 0-100
+    key_policies: List[str] = Field(default_factory=list, alias="keyPolicies")  # 关联国家政策
+    trend: str = ""                     # 政策趋势判断
+    aggressiveness: float = 0           # 策略调整系数 -0.5~+0.5
+    analysis: str = ""                  # 简要分析
+
+
+class TierRecommendResponse(BaseModel):
+    tiers: List[AddTier]
+    stop_profit_line: float = Field(0, alias="stopProfitLine")
+    stop_loss_line: float = Field(0, alias="stopLossLine")
+    stop_profit_ratio: float = Field(0, alias="stopProfitRatio")
+    stop_loss_ratio: float = Field(0, alias="stopLossRatio")
+    strategy_style: str = Field("", alias="strategyStyle")     # 策略风格标签
+    macro_analysis: Optional[MacroAnalysisResult] = Field(None, alias="macroAnalysis")  # 宏观分析结果
+    explanation: str = ""
 

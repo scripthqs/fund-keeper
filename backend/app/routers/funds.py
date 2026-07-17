@@ -1,5 +1,6 @@
 """基金 CRUD 路由 + 天天基金自动更新"""
 
+import json
 import logging
 from typing import List, Optional
 
@@ -8,7 +9,8 @@ from fastapi import APIRouter, HTTPException, Query
 from app.database import get_db, gen_id, now_str, today_str
 from app.models import (
     FundCreate, FundOut, FundUpdate, ExecuteActionRequest, ExecuteActionResponse,
-    FundQueryResponse, AutoUpdateResult, AutoUpdateResponse,
+    FundQueryResponse, AutoUpdateResult, AutoUpdateResponse, AddTier,
+    TierRecommendRequest, TierRecommendResponse,
 )
 
 from app.fund_api import query_fund_by_code, get_fund_nav_on_date, FundQueryError
@@ -17,27 +19,42 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/funds", tags=["基金管理"])
 
 
-@router.get("", response_model=List[FundOut])
+@router.get("")
 async def list_funds():
     """获取所有基金"""
     conn = get_db()
     rows = conn.execute("SELECT * FROM funds ORDER BY created_at").fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    result = []
+    for r in rows:
+        d = dict(r)
+        # 反序列化 add_tiers JSON
+        try:
+            d["add_tiers"] = json.loads(d.get("add_tiers", "")) if d.get("add_tiers") else []
+        except (json.JSONDecodeError, TypeError):
+            d["add_tiers"] = []
+        item = FundOut(**d).model_dump(by_alias=True)
+        result.append(item)
+    return result
 
 
-@router.post("", response_model=FundOut)
+@router.post("")
 async def create_fund(fund: FundCreate):
     """添加基金"""
     conn = get_db()
     fund_id = gen_id()
     data = fund.model_dump(by_alias=True)
+    # 直接从 Pydantic 模型取出 add_tiers，确保拿到正确数据
+    tiers_raw = fund.add_tiers or []
+    add_tiers_json = json.dumps([t.model_dump() for t in tiers_raw], ensure_ascii=False)
     conn.execute(
         """INSERT INTO funds
            (id, name, fund_code, fund_shares, initial_principal, buy_date,
             total_buy_amount, total_sell_amount, current_market_value,
-            current_return_rate, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            current_return_rate, max_investment, add_tiers,
+            stop_profit_line, stop_loss_line, stop_profit_ratio, stop_loss_ratio,
+            created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             fund_id,
             data["name"],
@@ -49,16 +66,27 @@ async def create_fund(fund: FundCreate):
             data["totalSellAmount"],
             data["currentMarketValue"],
             data["currentReturnRate"],
+            data.get("maxInvestment", 0),
+            add_tiers_json,
+            data.get("stopProfitLine", 0),
+            data.get("stopLossLine", 0),
+            data.get("stopProfitRatio", 0),
+            data.get("stopLossRatio", 0),
             now_str(),
         ),
     )
     conn.commit()
     row = conn.execute("SELECT * FROM funds WHERE id = ?", (fund_id,)).fetchone()
+    d = dict(row)
+    try:
+        d["add_tiers"] = json.loads(d.get("add_tiers", "")) if d.get("add_tiers") else []
+    except (json.JSONDecodeError, TypeError):
+        d["add_tiers"] = []
     conn.close()
-    return dict(row)
+    return FundOut(**d).model_dump(by_alias=True)
 
 
-@router.put("/{fund_id}", response_model=FundOut)
+@router.put("/{fund_id}")
 async def update_fund(fund_id: str, fund: FundUpdate):
     """编辑基金"""
     conn = get_db()
@@ -68,11 +96,15 @@ async def update_fund(fund_id: str, fund: FundUpdate):
         raise HTTPException(status_code=404, detail="基金不存在")
 
     data = fund.model_dump(by_alias=True)
+    # 直接从 Pydantic 模型取出 add_tiers，确保拿到正确数据
+    tiers_raw = fund.add_tiers or []
+    add_tiers_json = json.dumps([t.model_dump() for t in tiers_raw], ensure_ascii=False)
     conn.execute(
         """UPDATE funds SET
            name=?, fund_code=?, fund_shares=?, initial_principal=?, buy_date=?,
            total_buy_amount=?, total_sell_amount=?, current_market_value=?,
-           current_return_rate=?
+           current_return_rate=?, max_investment=?, add_tiers=?,
+           stop_profit_line=?, stop_loss_line=?, stop_profit_ratio=?, stop_loss_ratio=?
            WHERE id=?""",
         (
             data["name"],
@@ -84,13 +116,24 @@ async def update_fund(fund_id: str, fund: FundUpdate):
             data["totalSellAmount"],
             data["currentMarketValue"],
             data["currentReturnRate"],
+            data.get("maxInvestment", 0),
+            add_tiers_json,
+            data.get("stopProfitLine", 0),
+            data.get("stopLossLine", 0),
+            data.get("stopProfitRatio", 0),
+            data.get("stopLossRatio", 0),
             fund_id,
         ),
     )
     conn.commit()
     row = conn.execute("SELECT * FROM funds WHERE id = ?", (fund_id,)).fetchone()
+    d = dict(row)
+    try:
+        d["add_tiers"] = json.loads(d.get("add_tiers", "")) if d.get("add_tiers") else []
+    except (json.JSONDecodeError, TypeError):
+        d["add_tiers"] = []
     conn.close()
-    return dict(row)
+    return FundOut(**d).model_dump(by_alias=True)
 
 
 @router.delete("/{fund_id}")
@@ -374,3 +417,66 @@ async def undo_action(history_id: str):
     result = dict(updated)
     conn.close()
     return {"ok": True, "fund": result}
+
+
+# ==================== AI 智能推荐加仓档位 ====================
+
+@router.post("/ai-recommend-tiers")
+async def ai_recommend_tiers(req: "TierRecommendRequest"):
+    """AI 根据基金的初始本金、投入上限、当前收益 + 宏观政策分析，生成合理的金字塔加仓档位"""
+    from app.config import settings
+    if not settings.llm_configured:
+        raise HTTPException(status_code=503, detail="服务端未配置 LLM API Key")
+
+    from app.agent import recommend_add_tiers, analyze_fund_macro
+    try:
+        data = req.model_dump(by_alias=True)
+
+        # 第一步：宏观政策分析
+        fund_name = data["fundName"]
+        macro = analyze_fund_macro(fund_name)
+        if macro.get("error"):
+            logger.warning("宏观分析失败：%s", macro.get("message"))
+            # 宏观分析失败不阻塞档位推荐，把错误信息带给前端展示
+            result = recommend_add_tiers(
+                fund_name=data["fundName"],
+                total_buy_amount=data["totalBuyAmount"],
+                initial_principal=data["initialPrincipal"],
+                max_investment=data["maxInvestment"],
+                current_return_rate=data["currentReturnRate"],
+                current_market_value=data["currentMarketValue"],
+                hold_days=data.get("holdDays", 0),
+                macro_analysis=None,
+            )
+            result["macroAnalysis"] = macro
+            return result
+        else:
+            logger.info("宏观分析完成: %s -> 行业=%s 政策评分=%d 调整系数=%.2f",
+                        fund_name, macro.get("sector"), macro.get("policyScore"),
+                        macro.get("aggressiveness", 0))
+
+        # 第二步：结合宏观分析推荐策略
+        result = recommend_add_tiers(
+            fund_name=data["fundName"],
+            total_buy_amount=data["totalBuyAmount"],
+            initial_principal=data["initialPrincipal"],
+            max_investment=data["maxInvestment"],
+            current_return_rate=data["currentReturnRate"],
+            current_market_value=data["currentMarketValue"],
+            hold_days=data.get("holdDays", 0),
+            macro_analysis=macro,
+        )
+
+        # 合并宏观分析结果到响应
+        result["macroAnalysis"] = {
+            "sector": macro.get("sector", ""),
+            "policyScore": macro.get("policyScore", 50),
+            "keyPolicies": macro.get("keyPolicies", []),
+            "trend": macro.get("trend", ""),
+            "aggressiveness": macro.get("aggressiveness", 0),
+            "analysis": macro.get("analysis", ""),
+        }
+
+        return result
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))

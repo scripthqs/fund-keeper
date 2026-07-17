@@ -61,6 +61,20 @@ def init_db():
         ("snapshot_before", "TEXT DEFAULT ''"),
     ])
 
+    # 兼容旧数据库：基金独立加仓档位 + 最大投入本金（每只基金可单独配置）
+    _migrate_columns(cursor, "funds", [
+        ("add_tiers", "TEXT DEFAULT ''"),
+        ("max_investment", "REAL DEFAULT 0"),
+    ])
+
+    # 兼容旧数据库：基金独立止盈止损配置
+    _migrate_columns(cursor, "funds", [
+        ("stop_profit_line", "REAL DEFAULT 0"),
+        ("stop_loss_line", "REAL DEFAULT 0"),
+        ("stop_profit_ratio", "REAL DEFAULT 0"),
+        ("stop_loss_ratio", "REAL DEFAULT 0"),
+    ])
+
     # 配置表（单行，id 固定为 'default'）
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS config (
@@ -124,10 +138,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "addPositionLine": -20,
     "addPositionMode": "multi",
     "addTiers": [
-        {"line": -8, "ratio": 3},
-        {"line": -12, "ratio": 5},
-        {"line": -17, "ratio": 8},
-        {"line": -22, "ratio": 12},
+        {"line": -8, "ratio": 5},
+        {"line": -12, "ratio": 10},
+        {"line": -17, "ratio": 18},
+        {"line": -22, "ratio": 28},
     ],
     "stopProfitRatio": 10,
     "trailingStop": 15,

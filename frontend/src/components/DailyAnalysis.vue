@@ -16,7 +16,7 @@
       </div>
 
       <!-- Vant 折叠面板（默认全部折叠，点击可收回，允许多个展开） -->
-      <van-collapse v-else v-model="activeNames" :border="false">
+      <van-collapse v-else v-model="activeNames" @change="onCollapseChange" :border="false">
         <van-swipe-cell v-for="fund in funds" :key="fund.id">
           <van-collapse-item
             :name="String(fund.id)"
@@ -88,7 +88,7 @@
                 block
                 :loading="fundStates[fund.id]?.fetchingChange"
                 @click="autoFetchTodayChange(fund)"
-              >🛰️ 自动获取今日涨跌幅</van-button>
+              >🛰️ 获取今日涨跌幅</van-button>
               <div v-if="fundStates[fund.id]?.fetchResult" class="text-xs mt-1 px-1" :style="{ color: fundStates[fund.id]?.fetchResult.includes('成功') ? '#12edd7' : '#ff9800' }">{{ fundStates[fund.id]?.fetchResult }}</div>
             </div>
 
@@ -256,6 +256,7 @@ function ensureState(fundId) {
       fetchResult: '',
       fundUpdating: false,
       lastSnapshot: null,
+      autoFetched: false,
     }
   }
   return fundStates[fundId]
@@ -277,6 +278,19 @@ function initAllStates() {
 }
 
 watch(funds, () => initAllStates(), { immediate: true, deep: true })
+
+/** 折叠面板展开/收起时触发，自动获取今日涨跌幅 */
+function onCollapseChange(name) {
+  if (!name) return
+  const fund = funds.value.find(f => String(f.id) === name[0])
+
+  if (!fund || !fund.fundCode) return
+  const s = ensureState(fund.id)
+  if (s.fetchingChange || s.autoFetched) return
+  s.autoFetched = true
+
+  autoFetchTodayChange(fund)
+}
 
 function fundStateColorClass(fund) {
   const rate = profitRateOf(fund)
@@ -402,17 +416,10 @@ async function applyPreview(fund) {
   s.lastSnapshot = { currentMarketValue: fund.currentMarketValue, currentReturnRate: fund.currentReturnRate }
   s.applying = true
   try {
-    await store.updateFund(fund.id, {
-      name: fund.name,
-      fundCode: fund.fundCode || '',
-      fundShares: fund.fundShares || 0,
-      initialPrincipal: fund.initialPrincipal,
-      buyDate: fund.buyDate,
-      totalBuyAmount: fund.totalBuyAmount,
-      totalSellAmount: fund.totalSellAmount,
+    await store.updateFund(fund.id, buildFullUpdate(fund, {
       currentMarketValue: pd.newMarketValue,
       currentReturnRate: pd.calculatedReturnRate != null ? pd.calculatedReturnRate : fund.currentReturnRate,
-    })
+    }))
     // 清除预览并同步今日数据到标题栏展示
     s.previewData = null
     s.previewTime = null
@@ -520,12 +527,10 @@ async function updateFundData(fund) {
 
   s.fundUpdating = true
   try {
-    await store.updateFund(fund.id, {
-      name: fund.name, fundCode: fund.fundCode || '', fundShares: fund.fundShares || 0,
-      initialPrincipal: fund.initialPrincipal, buyDate: fund.buyDate,
-      totalBuyAmount: fund.totalBuyAmount, totalSellAmount: fund.totalSellAmount,
-      currentMarketValue: newMarketValue, currentReturnRate: s.totalReturn,
-    })
+    await store.updateFund(fund.id, buildFullUpdate(fund, {
+      currentMarketValue: newMarketValue,
+      currentReturnRate: s.totalReturn,
+    }))
   } catch (e) {
     showTip('更新失败: ' + (e.message || '未知错误'))
     s.lastSnapshot = null
@@ -540,18 +545,38 @@ async function undoUpdate(fund) {
   if (!snap || !fund) return
   s.fundUpdating = true
   try {
-    await store.updateFund(fund.id, {
-      name: fund.name, fundCode: fund.fundCode || '', fundShares: fund.fundShares || 0,
-      initialPrincipal: fund.initialPrincipal, buyDate: fund.buyDate,
-      totalBuyAmount: fund.totalBuyAmount, totalSellAmount: fund.totalSellAmount,
-      currentMarketValue: snap.currentMarketValue, currentReturnRate: snap.currentReturnRate,
-    })
+    await store.updateFund(fund.id, buildFullUpdate(fund, {
+      currentMarketValue: snap.currentMarketValue,
+      currentReturnRate: snap.currentReturnRate,
+    }))
     s.lastSnapshot = null
     showTip('✅ 已撤回更新')
   } catch (e) {
     showTip('撤回失败: ' + (e.message || '未知错误'))
   } finally {
     s.fundUpdating = false
+  }
+}
+
+/** 构建完整的基金更新对象，确保 addTiers / maxInvestment / 止盈止损等不被默认值覆盖 */
+function buildFullUpdate(fund, overrides = {}) {
+  return {
+    name: fund.name,
+    fundCode: fund.fundCode || '',
+    fundShares: fund.fundShares || 0,
+    initialPrincipal: fund.initialPrincipal,
+    buyDate: fund.buyDate,
+    totalBuyAmount: fund.totalBuyAmount,
+    totalSellAmount: fund.totalSellAmount,
+    currentMarketValue: fund.currentMarketValue,
+    currentReturnRate: fund.currentReturnRate,
+    maxInvestment: fund.maxInvestment ?? 0,
+    addTiers: fund.addTiers?.length ? [...fund.addTiers] : [],
+    stopProfitLine: fund.stopProfitLine ?? 0,
+    stopLossLine: fund.stopLossLine ?? 0,
+    stopProfitRatio: fund.stopProfitRatio ?? 0,
+    stopLossRatio: fund.stopLossRatio ?? 0,
+    ...overrides,
   }
 }
 
@@ -615,7 +640,7 @@ function analyze(fund) {
 .fund-title-name {
   font-size: 0.88rem;
   font-weight: 600;
-  color: #12edd7;
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

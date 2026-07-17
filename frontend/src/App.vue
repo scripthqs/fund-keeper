@@ -70,7 +70,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, provide } from 'vue'
+import { ref, onMounted, onUnmounted, provide, nextTick, watch } from 'vue'
 import { useStore } from './composables/useStore'
 import FundModal from './components/FundModal.vue'
 import HoldingsTab from './components/tabs/HoldingsTab.vue'
@@ -88,8 +88,12 @@ const editingFundId = ref(null)
 const analysisData = ref(null)
 
 function openFundModal(id) {
-  editingFundId.value = id
+  // 先置空再设值，确保 watch 每次都能触发（即使同一只基金重复打开）
+  editingFundId.value = null
   fundModalVisible.value = true
+  nextTick(() => {
+    editingFundId.value = id
+  })
 }
 
 // 提供给子组件
@@ -169,7 +173,13 @@ onMounted(async () => {
     isDark.value = true
     document.documentElement.classList.add('dark')
   }
-  await store.loadAll()
+  // 初始只加载默认 Tab（持仓）所需数据
+  await store.loadForTab('holdings', true)
+})
+
+// 切换 Tab 时按需加载对应数据
+watch(activeTab, (tab) => {
+  store.loadForTab(tab)
 })
 
 onUnmounted(() => { clearInterval(timer); clearInterval(holidayTimer) })
