@@ -92,6 +92,39 @@ ssh root@23.95.169.175 "sudo systemctl restart fund-keeper"
 
 ---
 
+## 更新依赖
+
+适用于：本地新增、升级或删除了 Python 依赖（修改了 `backend/requirements.txt`）。
+
+> 说明：Python 依赖不会随代码同步自动生效，远程服务器有独立的 venv，必须手动安装。如果只改了 Python 代码没动 `requirements.txt`，则无需执行本节。
+
+用图形化工具把本地 `backend\requirements.txt` 上传到国内服务器 `/opt/fund-keeper/backend/`（覆盖）。
+
+也可以在你本机直接执行：
+
+```bash
+scp d:/Work/fund-keeper/backend/requirements.txt root@1.14.152.133:/opt/fund-keeper/backend/requirements.txt
+```
+
+在国内服务器 SSH 终端执行：
+
+```bash
+# 传到海外服务器
+scp /opt/fund-keeper/backend/requirements.txt root@23.95.169.175:/opt/fund-keeper/backend/requirements.txt
+
+# 在海外服务器重建依赖（确保 venv 用的是 Python 3.9）
+ssh root@23.95.169.175 << 'EOF'
+cd /opt/fund-keeper/backend
+source venv/bin/activate
+pip install -r requirements.txt
+EOF
+
+# 重启后端
+ssh root@23.95.169.175 "sudo systemctl restart fund-keeper"
+```
+
+---
+
 ## 查看后端日志（排查错误用）
 
 ```bash
