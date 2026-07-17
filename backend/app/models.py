@@ -5,6 +5,13 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
+# ==================== 加仓档位（需先定义，被 FundBase / ConfigUpdate 引用）====================
+
+class AddTier(BaseModel):
+    line: float
+    ratio: float
+
+
 # ==================== 基金 ====================
 
 class FundBase(BaseModel):
@@ -42,11 +49,6 @@ class FundOut(FundBase):
 
 
 # ==================== 配置 ====================
-
-class AddTier(BaseModel):
-    line: float
-    ratio: float
-
 
 class ConfigUpdate(BaseModel):
     style: str = "进取型"
