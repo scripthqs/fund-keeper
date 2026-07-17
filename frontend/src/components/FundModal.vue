@@ -20,7 +20,13 @@
           <van-field v-model.number="form.currentMarketValue" label="当前市值 (元)" type="number" placeholder="10000" />
           <van-field v-model.number="form.totalBuyAmount" label="累计买入 (元)" type="number" placeholder="10000" />
           <van-field v-model.number="form.totalSellAmount" label="累计卖出 (元)" type="number" placeholder="0" />
-          <van-field v-model.number="form.currentReturnRate" label="总收益率 (%)" type="number" placeholder="0" />
+          <van-field
+            :model-value="fmtReturnRate"
+            label="总收益率 (%)"
+            readonly
+            input-align="right"
+            :class="autoReturnRate >= 0 ? 'text-red-600' : 'text-green-600'"
+          />
         </van-cell-group>
         <div class="flex gap-2 mt-4">
           <van-button type="primary" round block :loading="saving" loading-text="保存中..." @click="save">💾 保存</van-button>
@@ -36,6 +42,7 @@
 <script setup>
 import { ref, inject, watch, computed } from 'vue'
 import { showTip, showError, askConfirm } from '../utils/dialog'
+import { round, B } from '../utils/bigMath'
 
 const emit = defineEmits(['close'])
 const store = inject('store')
@@ -56,7 +63,21 @@ const form = ref({
 const hasFormData = computed(() => {
   const f = form.value
   return f.name.trim() !== '' || f.initialPrincipal > 0 || f.currentMarketValue > 0 ||
-    f.totalBuyAmount > 0 || f.totalSellAmount > 0 || f.currentReturnRate !== 0
+    f.totalBuyAmount > 0 || f.totalSellAmount > 0
+})
+
+/** 自动计算总收益率 = (市值 - 累计买入 + 累计卖出) ÷ 累计买入 × 100 */
+const autoReturnRate = computed(() => {
+  const f = form.value
+  if (!f.totalBuyAmount || f.totalBuyAmount <= 0) return null
+  const profit = B(f.currentMarketValue || 0).minus(f.totalBuyAmount).plus(f.totalSellAmount || 0)
+  return round(profit.div(f.totalBuyAmount).times(100))
+})
+
+const fmtReturnRate = computed(() => {
+  const r = autoReturnRate.value
+  if (r == null) return '--'
+  return (r >= 0 ? '+' : '') + r.toFixed(2) + '%'
 })
 
 function markInteracted() { hasInteracted.value = true }
@@ -85,11 +106,13 @@ async function closeWithConfirm() {
   emit('close')
 }
 
-async function save() {
+  async function save() {
   if (!form.value.name.trim()) { showTip('请输入基金名称'); return }
   saving.value = true
   try {
     const data = { ...form.value, totalBuyAmount: form.value.totalBuyAmount || form.value.initialPrincipal, currentMarketValue: form.value.currentMarketValue || form.value.initialPrincipal }
+    // 自动计算总收益率
+    data.currentReturnRate = autoReturnRate.value ?? 0
     if (editingFundId.value) await store.updateFund(editingFundId.value, data)
     else await store.createFund(data)
     hasInteracted.value = false

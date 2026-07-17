@@ -60,6 +60,7 @@
           type="number"
           placeholder="例：+2.5"
           size="small"
+          @update:model-value="onChangeInput"
         />
         <van-field
           v-model.number="todayProfit"
@@ -197,7 +198,7 @@ function calcTotalReturn(profit) {
 // 监听涨跌幅变化：自动推算今日收益
 watch(todayChange, (val) => {
   const fund = selectedFund.value
-  if (fund && val != null && !isNaN(val)) {
+  if (fund && val != null && !isNaN(val) && !profitManuallySet.value) {
     // 自动计算总收益率：新市值 = 当前市值 * (1 + 涨跌幅/100)
     autoFilled.value = true
     const projectedProfit = B(fund.currentMarketValue).times(B(1).plus(B(val).div(100))).minus(fund.totalBuyAmount).plus(fund.totalSellAmount || 0)
@@ -224,6 +225,7 @@ watch(todayProfit, (val) => {
       // 同步更新总收益率：收益 = 当前总收益 + 今日收益
       const projectedProfit = B(fund.currentMarketValue).minus(fund.totalBuyAmount).plus(fund.totalSellAmount || 0).plus(val)
       totalReturn.value = calcTotalReturn(projectedProfit)
+      autoFilled.value = true
     }
   }
 })
@@ -231,6 +233,11 @@ watch(todayProfit, (val) => {
 /** 标记用户手动编辑了今日收益 */
 function onProfitInput() {
   profitManuallySet.value = true
+}
+
+/** 用户修改涨跌幅时，取消收益优先模式 */
+function onChangeInput() {
+  profitManuallySet.value = false
 }
 
 /** 应用建议的今日收益 */
