@@ -120,6 +120,16 @@ class HistoryCreate(BaseModel):
 
 class HistoryOut(HistoryCreate):
     id: str
+    ai_evaluation: str = Field("", alias="aiEvaluation")
+
+
+class HistoryEvaluateRequest(BaseModel):
+    """AI 评价操作历史的请求"""
+    history_id: str = Field("", alias="historyId")
+
+
+class HistoryEvaluateResponse(BaseModel):
+    evaluation: str
 
 
 # ==================== 聊天 ====================

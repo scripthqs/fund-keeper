@@ -67,6 +67,7 @@ export const api = {
   // 历史
   getHistory: () => http.get('/history'),
   clearHistory: () => http.delete('/history'),
+  evaluateHistory: (historyId) => http.post('/history/evaluate/' + historyId),
 
   // 撤回
   undoAction: (historyId) => http.post('/funds/undo/' + historyId),

@@ -337,6 +337,10 @@ def analyze_fund_macro(fund_name: str) -> dict:
         # 3. 清理常见格式问题：尾逗号（JSON 标准不允许）
         text = re.sub(r",\s*(\}|\])", r"\1", text)
 
+        # 4. 清理 JSON 中未转义的控制字符（literal newline 等会导致 json.loads 失败）
+        text = text.replace("\n", " ").replace("\r", " ")
+        text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
+
         result = json.loads(text)
         return {
             "sector": result.get("sector", "未知"),
@@ -384,30 +388,53 @@ def analyze_fund_macro(fund_name: str) -> dict:
 
 TIER_RECOMMEND_PROMPT = """你是一位资深基金投资策略师，擅长设计金字塔加仓方案和止盈止损策略。用户需要为一只基金配置完整的交易策略。
 
+⚠️ 推荐优先级（核心原则）：【投入上限/剩余预算 > 宏观政策分析】
+- 投入上限是硬约束，加仓比例必须首先服务于"在预算范围内最大化资金使用效率"
+- 宏观政策分析仅作为辅助参考，在预算允许的范围内做小幅调整，不能颠覆预算主导的结论
+- 简单来说：先根据预算算出比例框架，再用宏观分析微调 10-20%，而不是反过来
+
 请严格按以下 JSON 格式输出，不要包含 markdown 代码块标记，只输出纯 JSON：
 
 {"tiers":[{"line":-8,"ratio":5},{"line":-13,"ratio":10},{"line":-19,"ratio":18},{"line":-26,"ratio":30}],"stopProfitLine":25,"stopLossLine":-30,"stopProfitRatio":20,"stopLossRatio":60,"strategyStyle":"标准策略","explanation":"你的解释"}
 
-加仓设计原则：
-1. line（触发阈值，负数）：从浅到深均匀分布，第1档约-6~-10%，每档间隔约4~8%。最后一档不要超过 -35%
-2. ratio（买入比例，正数）：初始本金的百分比。越往后越大（金字塔加仓），比例递增明显
-3. 所有比例加起来的总金额不能超过「剩余预算」。但也要合理利用预算空间，不能太保守
-4. 如果剩余预算很充裕（是初始本金的3倍以上），可以设得积极一些
+═══════════════════════════════════
+▌ 第一阶段：基于投入上限确定比例框架（主导）
+═══════════════════════════════════
 
-止盈止损设计原则：
-5. stopProfitLine（止盈触发线，正数，%）：根据基金类型和当前市况。偏股型基金建议 15-35%，债基 5-10%。持有天数短（<30天）宜设低
-6. stopLossLine（止损触发线，负数，%）：根据用户最大可承受亏损。偏股型通常 -20~-35%，保守型 -15~-20%。不要设得太深，否则止损就失去意义了
-7. stopProfitRatio（止盈卖出比例，正数，%）：建议在 15-30% 之间，分批止盈降低踏空风险
-8. stopLossRatio（止损卖出比例，正数，%）：建议在 50-80% 之间，尽量多割以保护本金
+1. 核心约束：所有档位的 ratio 总和 × 初始本金的金额，不能超过「剩余预算」。这是不可突破的硬约束。
+2. 先看"预算覆盖率"（剩余预算 / 初始本金），这决定了你可以分配多高的比例：
+   - 预算覆盖率 ≥ 2.0 倍：预算充裕，可设较高比例（4档之和可达 50-70%），充分利用预算空间
+   - 预算覆盖率 1.0~2.0 倍：预算适中，比例中等（4档之和约 30-50%）
+   - 预算覆盖率 0.5~1.0 倍：预算偏紧，比例偏低（4档之和约 15-30%）
+   - 预算覆盖率 < 0.5 倍：预算紧张，比例保守（4档之和不超过 15%），量力而行
+   - 未设置投入上限（无上限）：视为预算覆盖率很大，可积极配置
 
-🔴 策略激进程度调整（非常重要）：
-我会在用户消息中提供该基金的「宏观政策分析」，包含 policyScore（政策支持度评分）、aggressiveness（策略调整系数）和 keyPolicies（国家政策）。
-- 如果政策大力支持（policyScore >= 80，aggressiveness > 0.2）：加仓档位可以设得更密集（间隔缩小到 3-5%），比例可以更大胆（最高档可达 35-40%），止盈线可以设得更高（25-40%），止损线可以设得更深（-25~-35%）——因为国家背书降低了长期风险
-- 如果政策中性（policyScore 40-79，aggressiveness -0.1~0.2）：保持标准策略，按上述 1-8 条原则正常推荐
-- 如果政策风险较大（policyScore < 40，aggressiveness < -0.1）：加仓档位设得更稀疏（间隔加大到 6-10%），比例更保守（最高档不超过 20%），止盈线设得更低（10-20%），止损线设得更浅（-10~-20%）——因为政策不确定性增加了风险
+3. line（触发阈值，负数）：从浅到深均匀分布，第1档约-6~-10%，每档间隔约4~8%。最后一档不要超过 -35%
+4. ratio（买入比例，正数）：初始本金的百分比。越往后越大（金字塔加仓），比例递增明显
+5. 在预算允许的前提下，比例递增要明显——最后一档应该是第一档的 3-6 倍，体现金字塔结构
 
-9. strategyStyle: 用简短标签说明策略风格，如"激进型""标准型""保守型""防御型"
-10. explanation 用 100 字以内中文解释推荐思路，要覆盖：宏观政策判断 + 加仓逻辑 + 止盈止损逻辑"""
+═══════════════════════════════════
+▌ 第二阶段：结合宏观政策微调（辅助）
+═══════════════════════════════════
+6. 我会在用户消息中提供「宏观政策分析」。在第一阶段确定的预算框架内，用宏观分析做有限度的调整：
+   - 政策大力支持（policyScore ≥ 80）：比例可在预算框架基础上上浮 10-20%，档位间隔可缩小 1-2%
+   - 政策中性（policyScore 40-79）：维持预算框架，不做系统性的宏观调整
+   - 政策风险较大（policyScore < 40）：比例可在预算框架基础上下调 10-20%，档位间隔可拉大 1-2%
+   ⚠️ 无论如何调整，总金额都不能突破剩余预算的硬约束
+
+═══════════════════════════════════
+▌ 止盈止损设计
+═══════════════════════════════════
+7. stopProfitLine（止盈触发线，正数，%）：偏股型基金 15-35%，债基 5-10%，持有天数 < 30天宜设低
+8. stopLossLine（止损触发线，负数，%）：偏股型通常 -20~-35%，保守型 -15~-20%
+9. stopProfitRatio（止盈卖出比例，正数，%）：15-30%，分批止盈降低踏空风险
+10. stopLossRatio（止损卖出比例，正数，%）：50-80%，尽量多割以保护本金
+
+═══════════════════════════════════
+▌ 输出字段
+═══════════════════════════════════
+11. strategyStyle: 用简短标签说明策略风格，如"预算充裕型""预算平衡型""预算紧张型""保守防御型"
+12. explanation 用 100 字以内中文解释推荐思路，要覆盖：预算约束判断（剩余预算/覆盖率）→ 加仓比例逻辑 → 宏观微调幅度（如适用）→ 止盈止损逻辑"""
 
 
 def recommend_add_tiers(
@@ -435,30 +462,55 @@ def recommend_add_tiers(
         client = _get_client()
 
         remaining = max_investment - total_buy_amount if max_investment > 0 else float("inf")
-        remaining_str = f"¥{remaining:,.0f}" if remaining < float("inf") else "无上限（未设置最大投入）"
 
-        # 构建宏观分析部分
+        # 计算预算覆盖率（剩余预算 / 初始本金），帮助 LLM 判断预算充裕程度
+        if max_investment > 0 and initial_principal > 0:
+            coverage_ratio = remaining / initial_principal
+            coverage_desc = (
+                "充裕（可积极配置）" if coverage_ratio >= 2.0 else
+                "适中" if coverage_ratio >= 1.0 else
+                "偏紧" if coverage_ratio >= 0.5 else
+                "紧张（需保守）"
+            )
+            remaining_str = f"¥{remaining:,.0f}"
+            budget_info = (
+                f"投入上限：¥{max_investment:,.2f}\n"
+                f"剩余可投入预算：{remaining_str}（预算覆盖率 = 剩余预算/初始本金 = {coverage_ratio:.1f}倍，预算状态：{coverage_desc}）"
+            )
+        else:
+            remaining_str = "无上限（未设置最大投入）"
+            budget_info = (
+                f"投入上限：未设置\n"
+                f"剩余可投入预算：无上限（预算覆盖率视为无穷大，可积极配置）"
+            )
+
+        # 构建宏观分析部分（放在预算信息之后，表明其为辅助参考）
         macro_text = ""
         if macro_analysis and macro_analysis.get("sector") != "未知":
             policies = "、".join(macro_analysis.get("keyPolicies", [])) or "暂无明确关联政策"
+            aggressiveness = macro_analysis.get('aggressiveness', 0)
+            if aggressiveness > 0.15:
+                policy_advice = "可在预算框架内小幅上浮比例（+10~20%）"
+            elif aggressiveness < -0.15:
+                policy_advice = "可在预算框架内小幅下调比例（-10~20%）"
+            else:
+                policy_advice = "维持预算框架，不做系统性调整"
             macro_text = (
-                f"\n\n【宏观政策分析】\n"
+                f"\n\n📎 以下为宏观政策分析（辅助参考，仅在预算允许范围内做微调）：\n"
                 f"所属行业/赛道：{macro_analysis.get('sector', '未知')}\n"
                 f"政策支持评分：{macro_analysis.get('policyScore', 50)}/100\n"
                 f"关联国家政策：{policies}\n"
                 f"政策趋势：{macro_analysis.get('trend', '')}\n"
-                f"策略调整建议：{'应更激进' if macro_analysis.get('aggressiveness', 0) > 0.15 else '应更保守' if macro_analysis.get('aggressiveness', 0) < -0.15 else '维持标准'}"
-                f"（调整系数 {macro_analysis.get('aggressiveness', 0):+.1f}）\n"
-                f"分析摘要：{macro_analysis.get('analysis', '')}\n"
+                f"调整建议：{policy_advice}（调整系数 {aggressiveness:+.1f}）\n"
             )
 
         user_message = (
-            f"请为以下基金推荐 4 档金字塔加仓方案和止盈止损线：\n\n"
+            f"请为以下基金推荐 4 档金字塔加仓方案和止盈止损线。\n"
+            f"记住：先看预算决定比例框架，再用宏观分析微调。\n\n"
             f"基金名称：{fund_name}\n"
             f"初始本金：¥{initial_principal:,.2f}\n"
             f"已投入金额：¥{total_buy_amount:,.2f}\n"
-            f"投入上限：{'¥{:,.2f}'.format(max_investment) if max_investment > 0 else '未设置'}\n"
-            f"剩余可投入预算：{remaining_str}\n"
+            f"{budget_info}\n"
             f"当前收益率：{current_return_rate:.2f}%\n"
             f"当前市值：¥{current_market_value:,.2f}\n"
             f"已持有天数：{hold_days}天"
@@ -493,6 +545,10 @@ def recommend_add_tiers(
         # 清理常见格式问题：尾逗号
         text = re.sub(r",\s*(\}|\])", r"\1", text)
 
+        # 清理 JSON 中未转义的控制字符（literal newline 等会导致 json.loads 失败）
+        text = text.replace("\n", " ").replace("\r", " ")
+        text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
+
         result = json.loads(text)
         if "tiers" in result:
             return {
@@ -514,6 +570,80 @@ def recommend_add_tiers(
     except Exception as e:
         logger.error("AI 推荐档位失败: %s", e)
         raise RuntimeError(f"AI 服务暂时不可用: {e}")
+
+
+# ==================== AI 操作评价 ====================
+
+EVALUATE_OPERATION_PROMPT = """你是一位经验丰富的基金投资行为分析师。用户每次买卖操作后，需要你对这次操作进行客观评价。
+
+评价维度：
+1. **操作时机**：当前收益率下，这个操作是否合适？
+2. **金额合理性**：投入/卖出的金额占总仓位比例是否合理？
+3. **纪律性**：是否遵循了止盈止损等纪律，还是情绪化操作？
+4. **风险提示**：后续需要注意的风险点
+
+评价要求：
+- 语气客观理性，像一位有经验的投资教练在点评
+- 不模棱两可，要给出明确的"做得对/不太对"的判断
+- 最后给出 1-2 条具体的改进建议
+- 整体控制在 150 字以内
+- 用纯文本回复，不需要 JSON 格式"""
+
+
+def evaluate_operation(
+    fund_name: str,
+    action_type: str,
+    amount: float,
+    return_rate: float,
+    note: str = "",
+    fund_context: Optional[str] = None,
+) -> str:
+    """
+    AI 评价一次买卖操作
+
+    Args:
+        fund_name: 基金名称
+        action_type: 操作类型（买入/卖出）
+        amount: 操作金额
+        return_rate: 操作时的收益率
+        note: 操作备注
+        fund_context: 基金持仓上下文（可选）
+
+    Returns:
+        AI 评价文本
+    """
+    try:
+        client = _get_client()
+
+        user_message = (
+            f"请评价以下这次基金操作：\n\n"
+            f"基金名称：{fund_name}\n"
+            f"操作类型：{action_type}\n"
+            f"操作金额：¥{amount:,.2f}\n"
+            f"操作时收益率：{return_rate:.2f}%\n"
+            f"操作原因/备注：{note or '无备注'}\n"
+        )
+
+        if fund_context:
+            user_message += f"\n当前持仓概况：\n{fund_context}"
+
+        messages = [
+            {"role": "system", "content": EVALUATE_OPERATION_PROMPT},
+            {"role": "user", "content": user_message},
+        ]
+
+        response = client.chat.completions.create(
+            model=settings.LLM_MODEL,
+            messages=messages,
+            temperature=0.5,
+        )
+        return response.choices[0].message.content.strip()
+
+    except RuntimeError:
+        raise
+    except Exception as e:
+        logger.error("操作评价失败: %s", e)
+        raise RuntimeError(f"AI 评价服务暂时不可用: {e}")
 
 
 

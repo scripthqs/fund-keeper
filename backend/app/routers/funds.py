@@ -279,144 +279,165 @@ async def auto_update_nav():
 
 @router.post("/action", response_model=ExecuteActionResponse)
 async def execute_action(req: ExecuteActionRequest):
-
     """执行买入/卖出操作，更新基金数据并记录历史"""
     conn = get_db()
-    fund = conn.execute(
-        "SELECT * FROM funds WHERE id = ?", (req.fund_id,)
-    ).fetchone()
-    if not fund:
+    try:
+        fund = conn.execute(
+            "SELECT * FROM funds WHERE id = ?", (req.fund_id,)
+        ).fetchone()
+        if not fund:
+            raise HTTPException(status_code=404, detail="基金不存在")
+
+        fund = dict(fund)
+        action_type = req.action_type
+
+        if action_type == "买入":
+            new_buy = fund["total_buy_amount"] + req.amount
+            new_market = fund["current_market_value"] + req.amount
+            conn.execute(
+                "UPDATE funds SET total_buy_amount=?, current_market_value=? WHERE id=?",
+                (new_buy, new_market, req.fund_id),
+            )
+        elif action_type == "卖出":
+            new_sell = fund["total_sell_amount"] + req.amount
+            new_market = max(0, fund["current_market_value"] - req.amount)
+            conn.execute(
+                "UPDATE funds SET total_sell_amount=?, current_market_value=? WHERE id=?",
+                (new_sell, new_market, req.fund_id),
+            )
+        else:
+            raise HTTPException(status_code=400, detail=f"不支持的操作类型: {action_type}")
+
+        # 重新计算收益率
+        updated = conn.execute(
+            "SELECT * FROM funds WHERE id = ?", (req.fund_id,)
+        ).fetchone()
+        updated = dict(updated)
+        if updated["total_buy_amount"] > 0:
+            new_rate = (
+                (updated["current_market_value"] - updated["total_buy_amount"] + updated["total_sell_amount"])
+                / updated["total_buy_amount"]
+            ) * 100
+            conn.execute(
+                "UPDATE funds SET current_return_rate=? WHERE id=?",
+                (new_rate, req.fund_id),
+            )
+            updated["current_return_rate"] = new_rate
+
+        # 记录撤回快照（操作前状态）写入 history 表
+        snapshot_before = json.dumps({
+            "total_buy_amount": fund["total_buy_amount"],
+            "total_sell_amount": fund["total_sell_amount"],
+            "current_market_value": fund["current_market_value"],
+            "current_return_rate": fund["current_return_rate"],
+        }, ensure_ascii=False)
+
+        if req.note:
+            note = req.note
+        else:
+            reason_map = {
+                "sell": "触发止盈",
+                "buy": "触发加仓",
+                "stop_loss": "触发止损",
+                "trailing_sell": "移动止盈",
+            }
+            note = reason_map.get(req.reason_type, "")
+            if req.is_max:
+                note += "（上限）"
+
+        history_id = gen_id()
+        conn.execute(
+            """INSERT INTO history (id, date, fund_name, type, amount, return_rate, note, created_at, snapshot_before)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                history_id,
+                today_str(),
+                updated["name"],
+                action_type,
+                req.amount,
+                fund["current_return_rate"],  # 操作前的收益率，反映真实的操作时机
+                note,
+                now_str(),
+                snapshot_before,
+            ),
+        )
+
+        conn.commit()
+
+        # 反序列化 add_tiers 字段（与 list_funds 保持一致）
+        result = dict(updated)
+        try:
+            result["add_tiers"] = json.loads(result.get("add_tiers", "")) if result.get("add_tiers") else []
+        except (json.JSONDecodeError, TypeError):
+            result["add_tiers"] = []
+
+        return {"ok": True, "fund": result, "historyId": history_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("执行操作失败: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"操作执行失败: {str(e)}")
+    finally:
         conn.close()
-        raise HTTPException(status_code=404, detail="基金不存在")
-
-    fund = dict(fund)
-    action_type = req.action_type
-
-    if action_type == "买入":
-        new_buy = fund["total_buy_amount"] + req.amount
-        new_market = fund["current_market_value"] + req.amount
-        conn.execute(
-            "UPDATE funds SET total_buy_amount=?, current_market_value=? WHERE id=?",
-            (new_buy, new_market, req.fund_id),
-        )
-    elif action_type == "卖出":
-        new_sell = fund["total_sell_amount"] + req.amount
-        new_market = max(0, fund["current_market_value"] - req.amount)
-        conn.execute(
-            "UPDATE funds SET total_sell_amount=?, current_market_value=? WHERE id=?",
-            (new_sell, new_market, req.fund_id),
-        )
-
-    # 重新计算收益率
-    updated = conn.execute(
-        "SELECT * FROM funds WHERE id = ?", (req.fund_id,)
-    ).fetchone()
-    updated = dict(updated)
-    if updated["total_buy_amount"] > 0:
-        new_rate = (
-            (updated["current_market_value"] - updated["total_buy_amount"] + updated["total_sell_amount"])
-            / updated["total_buy_amount"]
-        ) * 100
-        conn.execute(
-            "UPDATE funds SET current_return_rate=? WHERE id=?",
-            (new_rate, req.fund_id),
-        )
-        updated["current_return_rate"] = new_rate
-
-    # 记录撤回快照（操作前状态）写入 history 表
-    import json
-    snapshot_before = json.dumps({
-        "total_buy_amount": fund["total_buy_amount"],
-        "total_sell_amount": fund["total_sell_amount"],
-        "current_market_value": fund["current_market_value"],
-        "current_return_rate": fund["current_return_rate"],
-    }, ensure_ascii=False)
-
-    if req.note:
-        note = req.note
-    else:
-        reason_map = {
-            "sell": "触发止盈",
-            "buy": "触发加仓",
-            "stop_loss": "触发止损",
-            "trailing_sell": "移动止盈",
-        }
-        note = reason_map.get(req.reason_type, "")
-        if req.is_max:
-            note += "（上限）"
-
-    from app.database import today_str
-    history_id = gen_id()
-    conn.execute(
-        """INSERT INTO history (id, date, fund_name, type, amount, return_rate, note, created_at, snapshot_before)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            history_id,
-            today_str(),
-            updated["name"],
-            action_type,
-            req.amount,
-            updated["current_return_rate"],
-            note,
-            now_str(),
-            snapshot_before,
-        ),
-    )
-
-    conn.commit()
-    result = dict(updated)
-    conn.close()
-    return {"ok": True, "fund": result, "historyId": history_id}
 
 
 @router.post("/undo/{history_id}")
 async def undo_action(history_id: str):
     """撤回指定操作记录，恢复基金到操作前状态"""
     conn = get_db()
-    row = conn.execute("SELECT * FROM history WHERE id = ?", (history_id,)).fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(status_code=404, detail="操作记录不存在")
-    row = dict(row)
-
-    snapshot = row.get("snapshot_before")
-    if not snapshot:
-        conn.close()
-        raise HTTPException(status_code=400, detail="该操作记录没有撤回快照（可能为旧数据）")
-
-    import json
     try:
-        before = json.loads(snapshot)
-    except json.JSONDecodeError:
+        row = conn.execute("SELECT * FROM history WHERE id = ?", (history_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="操作记录不存在")
+        row = dict(row)
+
+        snapshot = row.get("snapshot_before")
+        if not snapshot:
+            raise HTTPException(status_code=400, detail="该操作记录没有撤回快照（可能为旧数据）")
+
+        import json
+        try:
+            before = json.loads(snapshot)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=500, detail="撤回快照数据损坏")
+
+        fund_name = row["fund_name"]
+        fund = conn.execute("SELECT * FROM funds WHERE name = ?", (fund_name,)).fetchone()
+        if not fund:
+            raise HTTPException(status_code=404, detail="对应基金不存在，可能已被删除")
+
+        fund = dict(fund)
+        conn.execute(
+            """UPDATE funds SET total_buy_amount=?, total_sell_amount=?,
+               current_market_value=?, current_return_rate=? WHERE name=?""",
+            (
+                before["total_buy_amount"],
+                before["total_sell_amount"],
+                before["current_market_value"],
+                before["current_return_rate"],
+                fund_name,
+            ),
+        )
+        # 删除该条历史记录
+        conn.execute("DELETE FROM history WHERE id = ?", (history_id,))
+        conn.commit()
+
+        updated = conn.execute("SELECT * FROM funds WHERE name = ?", (fund_name,)).fetchone()
+        result = dict(updated)
+        try:
+            result["add_tiers"] = json.loads(result.get("add_tiers", "")) if result.get("add_tiers") else []
+        except (json.JSONDecodeError, TypeError):
+            result["add_tiers"] = []
+        return {"ok": True, "fund": result}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("撤回操作失败: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"撤回失败: {str(e)}")
+    finally:
         conn.close()
-        raise HTTPException(status_code=500, detail="撤回快照数据损坏")
-
-    fund_name = row["fund_name"]
-    fund = conn.execute("SELECT * FROM funds WHERE name = ?", (fund_name,)).fetchone()
-    if not fund:
-        conn.close()
-        raise HTTPException(status_code=404, detail="对应基金不存在，可能已被删除")
-
-    fund = dict(fund)
-    conn.execute(
-        """UPDATE funds SET total_buy_amount=?, total_sell_amount=?,
-           current_market_value=?, current_return_rate=? WHERE name=?""",
-        (
-            before["total_buy_amount"],
-            before["total_sell_amount"],
-            before["current_market_value"],
-            before["current_return_rate"],
-            fund_name,
-        ),
-    )
-    # 删除该条历史记录
-    conn.execute("DELETE FROM history WHERE id = ?", (history_id,))
-    conn.commit()
-
-    updated = conn.execute("SELECT * FROM funds WHERE name = ?", (fund_name,)).fetchone()
-    result = dict(updated)
-    conn.close()
-    return {"ok": True, "fund": result}
 
 
 # ==================== AI 智能推荐加仓档位 ====================

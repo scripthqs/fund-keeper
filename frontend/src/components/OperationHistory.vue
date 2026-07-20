@@ -19,16 +19,31 @@
               <th class="text-center py-2 px-2">操作</th>
             </tr></thead>
             <tbody>
-              <tr v-for="h in history" :key="h.id" style="border-bottom:1px solid var(--border-color)">
-                <td class="py-2 px-2">{{ h.date }}</td><td class="py-2 px-2">{{ h.fundName }}</td>
-                <td class="py-2 px-2"><van-tag :type="h.type === '买入' ? 'success' : 'danger'" round size="small">{{ h.type }}</van-tag></td>
-                <td class="py-2 px-2 text-right font-medium">¥{{ fmtNum(h.amount) }}</td>
-                <td class="py-2 px-2 text-right" :class="(h.returnRate || 0) >= 0 ? 'text-red-600' : 'text-green-600'">{{ fmtSigned(h.returnRate) }}%</td>
-                <td class="py-2 px-2 text-xs" style="color:var(--text-secondary)">{{ h.note || '-' }}</td>
-                <td class="py-2 px-2 text-center">
-                  <van-button v-if="h.canUndo" size="mini" round plain type="warning" :loading="undoingId === h.id" @click="undo(h)">↩ 撤回</van-button>
-                </td>
-              </tr>
+              <template v-for="h in history" :key="h.id">
+                <tr :style="{ borderBottom: h.aiEvaluation ? 'none' : '1px solid var(--border-color)' }">
+                  <td class="py-2 px-2">{{ h.date }}</td><td class="py-2 px-2">{{ h.fundName }}</td>
+                  <td class="py-2 px-2"><van-tag :type="h.type === '买入' ? 'success' : 'danger'" round size="small">{{ h.type }}</van-tag></td>
+                  <td class="py-2 px-2 text-right font-medium">¥{{ fmtNum(h.amount) }}</td>
+                  <td class="py-2 px-2 text-right" :class="(h.returnRate || 0) >= 0 ? 'text-red-600' : 'text-green-600'">{{ fmtSigned(h.returnRate) }}%</td>
+                  <td class="py-2 px-2 text-xs" style="color:var(--text-secondary)">{{ h.note || '-' }}</td>
+                  <td class="py-2 px-2 text-center">
+                    <div class="flex items-center justify-center gap-1 flex-wrap">
+                      <van-button v-if="h.canUndo" size="mini" round plain type="warning" :loading="undoingId === h.id" @click="undo(h)">↩ 撤回</van-button>
+                      <van-button
+                        v-if="!h.aiEvaluation"
+                        size="mini" round plain type="primary"
+                        :loading="evaluatingId === h.id"
+                        @click="evaluate(h)"
+                      >🤖 AI评价</van-button>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-if="h.aiEvaluation" :key="'eval-' + h.id" style="border-bottom:1px solid var(--border-color)">
+                  <td :colspan="7" class="py-2 px-3">
+                    <div class="ai-evaluation-box">{{ h.aiEvaluation }}</div>
+                  </td>
+                </tr>
+              </template>
             </tbody>
           </table>
         </div>
@@ -44,9 +59,16 @@
               <span :style="{ color: (h.returnRate || 0) >= 0 ? '#dc2626' : '#16a34a', fontWeight: 600 }">📊 {{ fmtSigned(h.returnRate) }}%</span>
               <span>{{ h.note || '-' }}</span>
             </div>
-            <div v-if="h.canUndo" class="mt-2 text-right">
-              <van-button size="mini" round plain type="warning" :loading="undoingId === h.id" @click="undo(h)">↩ 撤回此操作</van-button>
+            <div class="mt-2 flex items-center gap-1 flex-wrap">
+              <van-button v-if="h.canUndo" size="mini" round plain type="warning" :loading="undoingId === h.id" @click="undo(h)">↩ 撤回此操作</van-button>
+              <van-button
+                v-if="!h.aiEvaluation"
+                size="mini" round plain type="primary"
+                :loading="evaluatingId === h.id"
+                @click="evaluate(h)"
+              >🤖 AI评价</van-button>
             </div>
+            <div v-if="h.aiEvaluation" class="ai-evaluation-box-mobile mt-2">{{ h.aiEvaluation }}</div>
           </div>
         </div>
       </template>
@@ -62,6 +84,7 @@ import { askConfirm, showTip } from '../utils/dialog'
 const store = inject('store')
 const history = store.history
 const undoingId = ref(null)
+const evaluatingId = ref(null)
 
 async function undo(h) {
   if (!await askConfirm(`确认撤回对「${h.fundName}」的${h.type}操作（¥${fmtNum(h.amount)}）吗？\n撤回后基金数据将恢复到操作前状态。`)) return
@@ -76,6 +99,18 @@ async function undo(h) {
   }
 }
 
+async function evaluate(h) {
+  evaluatingId.value = h.id
+  try {
+    await store.evaluateHistory(h.id)
+    showTip('✅ AI 评价完成')
+  } catch (e) {
+    showTip('AI 评价失败: ' + (e.message || '未知错误'))
+  } finally {
+    evaluatingId.value = null
+  }
+}
+
 async function clear() {
   if (!await askConfirm('确定清空所有操作历史吗？此操作不可恢复。')) return
   await store.clearHistory()
@@ -83,8 +118,8 @@ async function clear() {
 
 function exportCsv() {
   if (history.value.length === 0) { showTip('暂无操作记录可导出'); return }
-  let csv = '日期,基金名称,操作类型,金额(元),收益率(%),备注\n'
-  history.value.forEach(h => { csv += `${h.date},${h.fundName},${h.type},${h.amount},${h.returnRate},${h.note || ''}\n` })
+  let csv = '日期,基金名称,操作类型,金额(元),收益率(%),备注,AI评价\n'
+  history.value.forEach(h => { csv += `${h.date},${h.fundName},${h.type},${h.amount},${h.returnRate},${h.note || ''},"${(h.aiEvaluation || '').replace(/"/g, '""')}"\n` })
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -94,3 +129,25 @@ function exportCsv() {
   URL.revokeObjectURL(url)
 }
 </script>
+
+<style scoped>
+.ai-evaluation-box {
+  font-size: 0.8rem;
+  line-height: 1.65;
+  color: var(--text-primary);
+  background: linear-gradient(135deg, rgba(139,92,246,.06), rgba(59,130,246,.05));
+  border: 1px solid rgba(139,92,246,.15);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+}
+
+.ai-evaluation-box-mobile {
+  font-size: 0.8rem;
+  line-height: 1.65;
+  color: var(--text-primary);
+  background: linear-gradient(135deg, rgba(139,92,246,.06), rgba(59,130,246,.05));
+  border: 1px solid rgba(139,92,246,.15);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+}
+</style>

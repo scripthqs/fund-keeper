@@ -82,7 +82,7 @@ async function loadSnapshots() {
 /** 加载操作历史（交易 / 我的 tab 需要） */
 async function loadHistoryData() {
   if (_historyLoaded.value) return
-  history.value = (await api.getHistory().catch(() => [])).map(h => ({ ...h, canUndo: !!h.snapshot_before }))
+  history.value = (await api.getHistory().catch(() => [])).map(h => ({ ...h, canUndo: !!h.snapshot_before, aiEvaluation: h.ai_evaluation || '' }))
   _historyLoaded.value = true
 }
 
@@ -176,7 +176,7 @@ async function loadAll() {
     ])
     Object.assign(config, DEFAULT_CONFIG, cfg)
     funds.value = fundList
-    history.value = hist.map(h => ({ ...h, canUndo: !!h.snapshot_before }))
+    history.value = hist.map(h => ({ ...h, canUndo: !!h.snapshot_before, aiEvaluation: h.ai_evaluation || '' }))
     chatMessages.value = chat
     aiStatus.value = { configured: health.llm_configured, model: health.model, connected: true }
     for (const f of funds.value) {
@@ -239,6 +239,13 @@ async function saveConfig(d) { Object.assign(config, d); try { await api.updateC
 async function updatePeakReturn(fid, pr) { if (!config.peakReturnRate) config.peakReturnRate = {}; config.peakReturnRate[fid] = pr; api.updatePeakReturn(fid, pr).catch(e => console.error('峰值更新失败:', e)) }
 async function clearHistory() { await api.clearHistory(); history.value = [] }
 
+async function evaluateHistory(historyId) {
+  const r = await api.evaluateHistory(historyId)
+  const h = history.value.find(item => item.id === historyId)
+  if (h) h.aiEvaluation = r.evaluation
+  return r.evaluation
+}
+
 async function sendChatMessage(message, fundContext) {
   const recent = chatMessages.value.slice(-20)
   const r = await api.chat(message, fundContext, recent)
@@ -297,8 +304,8 @@ export function useStore() {
   return {
     config, funds, history, chatMessages, dailySnapshots, aiStatus, loading,
     totalPrincipal, totalMarketValue, totalBuy, totalSell, totalReturnRate,
-    loadAll, loadForTab, refreshForTab, refreshFunds, createFund, updateFund, removeFund, executeAction, undoAction,
-    saveConfig, updatePeakReturn, clearHistory,
+    loadAll, loadForTab, refreshForTab, refreshFunds, createFund, updateFund, removeFund,     executeAction, undoAction,
+    saveConfig, updatePeakReturn, clearHistory, evaluateHistory,
     sendChatMessage, clearChat, saveSnapshot, buildFundContext,
     queryFund, autoUpdateNav,
   }
