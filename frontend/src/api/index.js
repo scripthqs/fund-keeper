@@ -17,15 +17,19 @@ const http = axios.create({
 http.interceptors.response.use(
   (response) => response.data,
   (error) => {
-    // 后端返回的 HTTP 错误（4xx/5xx）
-    const detail =
-      error.response?.data?.detail ||
-      error.response?.data?.message ||
-      null
+    const detail = error.response?.data?.detail
 
     if (detail) {
-      // 后端返回了具体错误描述，直接使用
-      return Promise.reject(new Error(detail))
+      // FastAPI 422 验证错误：detail 是数组，格式化为可读字符串
+      if (Array.isArray(detail)) {
+        const msgs = detail.map(d => {
+          const loc = d.loc?.join('.') || 'unknown'
+          return `[${loc}] ${d.msg}`
+        }).join('; ')
+        return Promise.reject(new Error(msgs))
+      }
+      // 普通错误消息
+      return Promise.reject(new Error(String(detail)))
     }
 
     // 网络层错误（无 response，说明请求根本没到达后端）

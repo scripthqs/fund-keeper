@@ -426,16 +426,34 @@ async function closeWithConfirm() {
   emit('close')
 }
 
+/** 将空字符串 / NaN 统一转为数字 0，避免 Pydantic 422 */
+function cleanNumeric(val) {
+  if (val === '' || val === null || val === undefined || (typeof val === 'number' && isNaN(val))) return 0
+  return val
+}
+
 async function save() {
   saving.value = true
   try {
     // 如果所有档位比例都为 0 或无有效值，视为不使用独立配置
     const validTiers = (form.value.addTiers || []).filter(t => t.ratio > 0 && t.line < 0)
+    const raw = form.value
     const data = {
-      ...form.value,
-      totalBuyAmount: form.value.totalBuyAmount || form.value.initialPrincipal,
-      currentMarketValue: form.value.currentMarketValue || form.value.initialPrincipal,
+      name: raw.name,
+      fundCode: raw.fundCode || '',
+      fundShares: cleanNumeric(raw.fundShares),
+      initialPrincipal: cleanNumeric(raw.initialPrincipal),
+      buyDate: raw.buyDate,
+      totalBuyAmount: cleanNumeric(raw.totalBuyAmount) || cleanNumeric(raw.initialPrincipal),
+      totalSellAmount: cleanNumeric(raw.totalSellAmount),
+      currentMarketValue: cleanNumeric(raw.currentMarketValue) || cleanNumeric(raw.initialPrincipal),
+      currentReturnRate: 0,
+      maxInvestment: cleanNumeric(raw.maxInvestment),
       addTiers: validTiers,
+      stopProfitLine: cleanNumeric(raw.stopProfitLine),
+      stopLossLine: cleanNumeric(raw.stopLossLine),
+      stopProfitRatio: cleanNumeric(raw.stopProfitRatio),
+      stopLossRatio: cleanNumeric(raw.stopLossRatio),
     }
     // 自动计算总收益率
     const profit = B(data.currentMarketValue || 0).minus(data.totalBuyAmount).plus(data.totalSellAmount || 0)
