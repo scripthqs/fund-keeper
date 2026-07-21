@@ -61,7 +61,25 @@ export function analyzeFundEnhanced(fund, todayChange, totalReturn, config, peak
     return { type: 'sell', title: '🎯 触发止盈！', message: `预计今日总收益变为${fmtSigned(totalReturn)}%，已触发止盈线（≥${effectiveStopProfitLine}%）。持有 ${holdDays} 天，建议卖出当前市值的 ${effectiveStopProfitRatio}%，即 ¥${fmtNum(sellAmount)} 元。`, cssClass: 'advice-sell', actionAmount: sellAmount, actionType: '卖出' }
   }
 
-  // 规则3：加仓
+  // 规则2.5：上涨回调加仓（仅对配置了 pullback 策略的盈利基金生效）
+  if (fund.strategyType === 'pullback' && fund.pullbackTiers?.length && totalReturn > 0) {
+    const pullbackBuy = getPullbackAddBuy(fund, fund.pullbackTiers, totalReturn, peakReturnRate)
+    if (pullbackBuy) {
+      return { type: 'pullback_buy', title: `📈 触发第 ${pullbackBuy.tierIdx} 档回调加仓！`, message: `当前已从高点 ${fmtSigned(peakReturnRate?.[fund.id] || totalReturn)}% 回撤 ${pullbackBuy.drawdown.toFixed(1)}%，触发回调加仓线（回撤≥${Math.abs(pullbackBuy.line)}%）。建议买入初始本金的 ${pullbackBuy.ratio}%，即 ¥${fmtNum(pullbackBuy.buyAmount)} 元（上涨趋势中的黄金坑，回调即上车）。`, cssClass: 'advice-buy', actionAmount: pullbackBuy.buyAmount, actionType: '买入' }
+    }
+    // 接近回调加仓区域
+    const closestPb = [...fund.pullbackTiers].sort((a, b) => b.line - a.line).find(t => {
+      const d = peakReturnRate?.[fund.id] || totalReturn
+      const dd = d - totalReturn
+      return dd > 0 && dd < Math.abs(t.line) && Math.abs(t.line) - dd < 3
+    })
+    if (closestPb) {
+      const currentDD = (peakReturnRate?.[fund.id] || totalReturn) - totalReturn
+      return { type: 'near_pullback', title: '🔍 接近回调加仓区域', message: `当前从高点回撤 ${currentDD.toFixed(1)}%，距离回调加仓档（回撤≥${Math.abs(closestPb.line)}%）还有 ${(Math.abs(closestPb.line) - currentDD).toFixed(1)}%。耐心等待回调到位再出手。`, cssClass: 'advice-hold', actionAmount: null }
+    }
+  }
+
+  // 规则3：加仓（下跌金字塔）
   const multiBuy = getMultiTierAddBuy(fund, effectiveAddTiers, totalReturn)
   if (multiBuy) {
     return { type: 'buy', title: `📉 触发第 ${multiBuy.tierIdx} 档加仓！`, message: `预计今日总收益变为${fmtSigned(totalReturn)}%，触发第 ${multiBuy.tierIdx} 档加仓线（≤${multiBuy.line}%）。建议买入初始本金的 ${multiBuy.ratio}%，即 ¥${fmtNum(multiBuy.buyAmount)} 元（金字塔策略：越跌越买）。`, cssClass: 'advice-buy', actionAmount: multiBuy.buyAmount, actionType: '买入' }
@@ -90,7 +108,7 @@ export function checkTrailingStop(fund, config, peakReturnRate) {
   return { triggered: false, peakReturn: peak, drawdown }
 }
 
-/** 多档加仓 */
+/** 多档加仓（下跌金字塔） */
 export function getMultiTierAddBuy(fund, addTiers, totalReturn) {
   if (!addTiers || !addTiers.length) return null
   const sortedTiers = [...addTiers].sort((a, b) => b.line - a.line)
@@ -98,6 +116,23 @@ export function getMultiTierAddBuy(fund, addTiers, totalReturn) {
     if (totalReturn <= tier.line) {
       const buyAmount = round(mulDiv(fund.initialPrincipal, tier.ratio, 100))
       return { tierIdx: addTiers.indexOf(tier) + 1, line: tier.line, ratio: tier.ratio, buyAmount }
+    }
+  }
+  return null
+}
+
+/** 上涨回调加仓 */
+export function getPullbackAddBuy(fund, pullbackTiers, totalReturn, peakReturnRate) {
+  if (!pullbackTiers || !pullbackTiers.length) return null
+  if (totalReturn <= 0) return null  // 已亏损，不适用回调加仓
+  const peak = peakReturnRate?.[fund.id] || totalReturn
+  const drawdown = peak - totalReturn  // 正数表示回撤幅度
+  if (drawdown <= 0) return null  // 还在创新高，不触发
+  const sortedTiers = [...pullbackTiers].sort((a, b) => a.line - b.line)  // line 是负数，越小越深
+  for (const tier of sortedTiers) {
+    if (drawdown >= Math.abs(tier.line)) {
+      const buyAmount = round(mulDiv(fund.initialPrincipal, tier.ratio, 100))
+      return { tierIdx: pullbackTiers.indexOf(tier) + 1, line: tier.line, ratio: tier.ratio, buyAmount, drawdown }
     }
   }
   return null

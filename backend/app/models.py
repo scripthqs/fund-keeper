@@ -26,6 +26,8 @@ class FundBase(BaseModel):
     current_return_rate: float = Field(0, alias="currentReturnRate")
     max_investment: float = Field(0, alias="maxInvestment")
     add_tiers: List[AddTier] = Field(default_factory=list, alias="addTiers")
+    strategy_type: str = Field("downside", alias="strategyType")  # "downside" 越跌越买 | "pullback" 上涨回调加仓
+    pullback_tiers: List[AddTier] = Field(default_factory=list, alias="pullbackTiers")  # 上涨回调加仓档位
     # 基金独立止盈止损（0 表示使用全局配置）
     stop_profit_line: float = Field(0, alias="stopProfitLine")
     stop_loss_line: float = Field(0, alias="stopLossLine")
@@ -235,7 +237,9 @@ class MacroAnalysisResult(BaseModel):
 
 
 class TierRecommendResponse(BaseModel):
-    tiers: List[AddTier]
+    tiers: List[AddTier]  # 下跌加仓档位
+    strategy_type: str = Field("downside", alias="strategyType")  # 推荐策略类型
+    pullback_tiers: List[AddTier] = Field(default_factory=list, alias="pullbackTiers")  # 上涨回调加仓档位
     stop_profit_line: float = Field(0, alias="stopProfitLine")
     stop_loss_line: float = Field(0, alias="stopLossLine")
     stop_profit_ratio: float = Field(0, alias="stopProfitRatio")

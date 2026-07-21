@@ -39,6 +39,8 @@ def init_db():
             current_market_value REAL DEFAULT 0,
             current_return_rate REAL DEFAULT 0,
             add_tiers TEXT DEFAULT '',
+            strategy_type TEXT DEFAULT 'downside',
+            pullback_tiers TEXT DEFAULT '',
             max_investment REAL DEFAULT 0,
             stop_profit_line REAL DEFAULT 0,
             stop_loss_line REAL DEFAULT 0,
@@ -102,6 +104,25 @@ def init_db():
         (json.dumps(DEFAULT_CONFIG, ensure_ascii=False),),
     )
 
+    conn.commit()
+    conn.close()
+
+    # 增量迁移：为已有数据库添加新列
+    migrate_db()
+
+
+def migrate_db():
+    """增量迁移：为已有数据库添加新列"""
+    conn = get_db()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("ALTER TABLE funds ADD COLUMN strategy_type TEXT DEFAULT 'downside'")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
+    try:
+        cursor.execute("ALTER TABLE funds ADD COLUMN pullback_tiers TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
     conn.commit()
     conn.close()
 

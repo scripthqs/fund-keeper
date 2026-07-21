@@ -19,6 +19,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/funds", tags=["基金管理"])
 
 
+def _parse_tiers(raw: str) -> list:
+    """安全解析 JSON tiers 字符串"""
+    if not raw:
+        return []
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
 @router.get("")
 async def list_funds():
     """获取所有基金"""
@@ -28,11 +38,9 @@ async def list_funds():
     result = []
     for r in rows:
         d = dict(r)
-        # 反序列化 add_tiers JSON
-        try:
-            d["add_tiers"] = json.loads(d.get("add_tiers", "")) if d.get("add_tiers") else []
-        except (json.JSONDecodeError, TypeError):
-            d["add_tiers"] = []
+        # 反序列化 JSON 字段
+        d["add_tiers"] = _parse_tiers(d.get("add_tiers", ""))
+        d["pullback_tiers"] = _parse_tiers(d.get("pullback_tiers", ""))
         item = FundOut(**d).model_dump(by_alias=True)
         result.append(item)
     return result
@@ -47,14 +55,17 @@ async def create_fund(fund: FundCreate):
     # 直接从 Pydantic 模型取出 add_tiers，确保拿到正确数据
     tiers_raw = fund.add_tiers or []
     add_tiers_json = json.dumps([t.model_dump() for t in tiers_raw], ensure_ascii=False)
+    pullback_raw = fund.pullback_tiers or []
+    pullback_tiers_json = json.dumps([t.model_dump() for t in pullback_raw], ensure_ascii=False)
     conn.execute(
         """INSERT INTO funds
            (id, name, fund_code, fund_shares, initial_principal, buy_date,
             total_buy_amount, total_sell_amount, current_market_value,
             current_return_rate, max_investment, add_tiers,
+            strategy_type, pullback_tiers,
             stop_profit_line, stop_loss_line, stop_profit_ratio, stop_loss_ratio,
             created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             fund_id,
             data["name"],
@@ -68,6 +79,8 @@ async def create_fund(fund: FundCreate):
             data["currentReturnRate"],
             data.get("maxInvestment", 0),
             add_tiers_json,
+            data.get("strategyType", "downside"),
+            pullback_tiers_json,
             data.get("stopProfitLine", 0),
             data.get("stopLossLine", 0),
             data.get("stopProfitRatio", 0),
@@ -78,10 +91,8 @@ async def create_fund(fund: FundCreate):
     conn.commit()
     row = conn.execute("SELECT * FROM funds WHERE id = ?", (fund_id,)).fetchone()
     d = dict(row)
-    try:
-        d["add_tiers"] = json.loads(d.get("add_tiers", "")) if d.get("add_tiers") else []
-    except (json.JSONDecodeError, TypeError):
-        d["add_tiers"] = []
+    d["add_tiers"] = _parse_tiers(d.get("add_tiers", ""))
+    d["pullback_tiers"] = _parse_tiers(d.get("pullback_tiers", ""))
     conn.close()
     return FundOut(**d).model_dump(by_alias=True)
 
@@ -96,14 +107,17 @@ async def update_fund(fund_id: str, fund: FundUpdate):
         raise HTTPException(status_code=404, detail="基金不存在")
 
     data = fund.model_dump(by_alias=True)
-    # 直接从 Pydantic 模型取出 add_tiers，确保拿到正确数据
+    # 直接从 Pydantic 模型取出 tiers，确保拿到正确数据
     tiers_raw = fund.add_tiers or []
     add_tiers_json = json.dumps([t.model_dump() for t in tiers_raw], ensure_ascii=False)
+    pullback_raw = fund.pullback_tiers or []
+    pullback_tiers_json = json.dumps([t.model_dump() for t in pullback_raw], ensure_ascii=False)
     conn.execute(
         """UPDATE funds SET
            name=?, fund_code=?, fund_shares=?, initial_principal=?, buy_date=?,
            total_buy_amount=?, total_sell_amount=?, current_market_value=?,
            current_return_rate=?, max_investment=?, add_tiers=?,
+           strategy_type=?, pullback_tiers=?,
            stop_profit_line=?, stop_loss_line=?, stop_profit_ratio=?, stop_loss_ratio=?
            WHERE id=?""",
         (
@@ -118,6 +132,8 @@ async def update_fund(fund_id: str, fund: FundUpdate):
             data["currentReturnRate"],
             data.get("maxInvestment", 0),
             add_tiers_json,
+            data.get("strategyType", "downside"),
+            pullback_tiers_json,
             data.get("stopProfitLine", 0),
             data.get("stopLossLine", 0),
             data.get("stopProfitRatio", 0),
@@ -128,10 +144,8 @@ async def update_fund(fund_id: str, fund: FundUpdate):
     conn.commit()
     row = conn.execute("SELECT * FROM funds WHERE id = ?", (fund_id,)).fetchone()
     d = dict(row)
-    try:
-        d["add_tiers"] = json.loads(d.get("add_tiers", "")) if d.get("add_tiers") else []
-    except (json.JSONDecodeError, TypeError):
-        d["add_tiers"] = []
+    d["add_tiers"] = _parse_tiers(d.get("add_tiers", ""))
+    d["pullback_tiers"] = _parse_tiers(d.get("pullback_tiers", ""))
     conn.close()
     return FundOut(**d).model_dump(by_alias=True)
 
@@ -445,6 +459,7 @@ async def undo_action(history_id: str):
 @router.post("/ai-recommend-tiers")
 async def ai_recommend_tiers(req: "TierRecommendRequest"):
     """AI 根据基金的初始本金、投入上限、当前收益 + 宏观政策分析，生成合理的金字塔加仓档位"""
+    import asyncio
     from app.config import settings
     if not settings.llm_configured:
         raise HTTPException(status_code=503, detail="服务端未配置 LLM API Key")
@@ -452,51 +467,48 @@ async def ai_recommend_tiers(req: "TierRecommendRequest"):
     from app.agent import recommend_add_tiers, analyze_fund_macro
     try:
         data = req.model_dump(by_alias=True)
-
-        # 第一步：宏观政策分析
         fund_name = data["fundName"]
-        macro = analyze_fund_macro(fund_name)
-        if macro.get("error"):
-            logger.warning("宏观分析失败：%s", macro.get("message"))
-            # 宏观分析失败不阻塞档位推荐，把错误信息带给前端展示
-            result = recommend_add_tiers(
-                fund_name=data["fundName"],
-                total_buy_amount=data["totalBuyAmount"],
-                initial_principal=data["initialPrincipal"],
-                max_investment=data["maxInvestment"],
-                current_return_rate=data["currentReturnRate"],
-                current_market_value=data["currentMarketValue"],
-                hold_days=data.get("holdDays", 0),
-                macro_analysis=None,
-            )
-            result["macroAnalysis"] = macro
-            return result
-        else:
-            logger.info("宏观分析完成: %s -> 行业=%s 政策评分=%d 调整系数=%.2f",
-                        fund_name, macro.get("sector"), macro.get("policyScore"),
-                        macro.get("aggressiveness", 0))
+        loop = asyncio.get_running_loop()
 
-        # 第二步：结合宏观分析推荐策略
-        result = recommend_add_tiers(
-            fund_name=data["fundName"],
-            total_buy_amount=data["totalBuyAmount"],
-            initial_principal=data["initialPrincipal"],
-            max_investment=data["maxInvestment"],
-            current_return_rate=data["currentReturnRate"],
-            current_market_value=data["currentMarketValue"],
-            hold_days=data.get("holdDays", 0),
-            macro_analysis=macro,
+        # 并发执行：宏观分析 + 档位推荐同时进行，总耗时 = max(宏观, 档位) 而非 sum(宏观 + 档位)
+        macro_future = loop.run_in_executor(None, analyze_fund_macro, fund_name)
+        tier_future = loop.run_in_executor(
+            None,
+            recommend_add_tiers,
+            data["fundName"],
+            data["totalBuyAmount"],
+            data["initialPrincipal"],
+            data["maxInvestment"],
+            data["currentReturnRate"],
+            data["currentMarketValue"],
+            data.get("holdDays", 0),
+            None,  # 先不传宏观分析，档位推荐独立运行
         )
 
-        # 合并宏观分析结果到响应
-        result["macroAnalysis"] = {
-            "sector": macro.get("sector", ""),
-            "policyScore": macro.get("policyScore", 50),
-            "keyPolicies": macro.get("keyPolicies", []),
-            "trend": macro.get("trend", ""),
-            "aggressiveness": macro.get("aggressiveness", 0),
-            "analysis": macro.get("analysis", ""),
-        }
+        # 等待两个任务完成（并行等待，总时间取最长的那个）
+        macro, result = await asyncio.gather(macro_future, tier_future, return_exceptions=True)
+
+        # 处理档位推荐异常
+        if isinstance(result, Exception):
+            if isinstance(result, RuntimeError):
+                raise HTTPException(status_code=503, detail=str(result))
+            raise HTTPException(status_code=500, detail=f"AI 档位推荐失败: {result}")
+
+        # 处理宏观分析结果
+        if isinstance(macro, Exception) or (isinstance(macro, dict) and macro.get("error")):
+            error_msg = str(macro) if isinstance(macro, Exception) else macro.get("message", "未知错误")
+            logger.warning("宏观分析失败（并发模式）：%s", error_msg)
+            result["macroAnalysis"] = {"error": True, "message": error_msg} if isinstance(macro, dict) and macro.get("error") else {"error": True, "message": error_msg, "sector": "未知", "policyScore": 50, "keyPolicies": [], "trend": "", "aggressiveness": 0, "analysis": "宏观分析超时或失败"}
+        else:
+            logger.info("宏观分析完成: %s -> 行业=%s 政策评分=%d", fund_name, macro.get("sector"), macro.get("policyScore"))
+            result["macroAnalysis"] = {
+                "sector": macro.get("sector", ""),
+                "policyScore": macro.get("policyScore", 50),
+                "keyPolicies": macro.get("keyPolicies", []),
+                "trend": macro.get("trend", ""),
+                "aggressiveness": macro.get("aggressiveness", 0),
+                "analysis": macro.get("analysis", ""),
+            }
 
         return result
     except RuntimeError as e:

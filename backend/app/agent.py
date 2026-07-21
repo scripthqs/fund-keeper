@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -31,11 +32,247 @@ def _get_client():
     _client = OpenAI(
         api_key=settings.LLM_API_KEY,
         base_url=settings.LLM_BASE_URL,
+        timeout=60.0,  # 60 秒超时，避免无限等待
+        max_retries=1, # 由我们自己的重试逻辑接管
     )
     logger.info("OpenAI 客户端初始化完成: model=%s", settings.LLM_MODEL)
     return _client
 
 
+def _call_llm_with_retry(messages, temperature=0.3, max_retries=2, max_tokens=1500):
+    """带重试的 LLM 调用，处理临时性 API 故障"""
+    client = _get_client()
+    last_error = None
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.chat.completions.create(
+                model=settings.LLM_MODEL,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries:
+                wait = (attempt + 1) * 0.5  # 递增等待：0.5s, 1s
+                logger.warning("LLM 调用失败(第%d/%d次)，%s 后重试: %s", attempt + 1, max_retries + 1, wait, e)
+                time.sleep(wait)
+    raise RuntimeError(f"LLM 调用 {max_retries + 1} 次均失败: {last_error}")
+
+
+def _safe_parse_json(text: str) -> dict:
+    """安全解析 AI 返回的 JSON，处理常见格式问题"""
+    # 1. 提取 markdown 代码块
+    if "```" in text:
+        match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
+        if match:
+            text = match.group(1).strip()
+
+    # 2. 用括号计数提取第一个完整 JSON 对象（比贪婪正则更可靠）
+    brace_start = text.find("{")
+    if brace_start >= 0 and not text.lstrip().startswith("{"):
+        # JSON 不在开头，用括号计数精确提取
+        depth = 0
+        in_string = False
+        escaped = False
+        json_end = -1
+        for i in range(brace_start, len(text)):
+            ch = text[i]
+            if escaped:
+                escaped = False
+                continue
+            if ch == "\\":
+                escaped = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    json_end = i + 1
+                    break
+        if json_end > brace_start:
+            text = text[brace_start:json_end].strip()
+
+    # 3. 清理尾逗号
+    text = re.sub(r",\s*(\}|\])", r"\1", text)
+
+    def _escape_string_newlines(m):
+        content = m.group(1)
+        content = content.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+        return '"' + content + '"'
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # 4. 尝试修复 AI 在 JSON 字符串值内使用 ASCII 双引号的问题
+    #    例如: "explanation":"选择"上涨回调"策略" → 引号破坏 JSON 结构
+    #    策略：尝试将中文场景的 ASCII 引号替换为中文引号 "\u201c" "\u201d"
+    text = _fix_json_content_quotes(text)
+
+    # 5. 用正则匹配 JSON 字符串值并转义控制字符
+    text = re.sub(r'"((?:[^"\\]|\\.)*)"', _escape_string_newlines, text)
+
+    # 6. 移除其他不可见控制字符
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
+
+    return json.loads(text)
+
+
+_JSON_FIELD_FALLBACK = re.compile(
+    r'"(strategyType|strategyStyle|explanation)"\s*:\s*"([^"]*)"'
+    r'|"(stopProfitLine|stopLossLine|stopProfitRatio|stopLossRatio)"\s*:\s*(-?\d+\.?\d*)'
+    r'|"(line|ratio)"\s*:\s*(-?\d+\.?\d*)',
+    re.DOTALL,
+)
+
+
+def _brute_parse_json(text: str) -> dict:
+    """最后的兜底：用正则从任意文本中暴力提取 JSON 字段"""
+    result: dict = {"strategyType": "downside", "tiers": [], "pullbackTiers": [],
+                    "stopProfitLine": 20, "stopLossLine": -25,
+                    "stopProfitRatio": 20, "stopLossRatio": 60,
+                    "strategyStyle": "标准策略", "explanation": ""}
+    tiers: list = []
+    pullback_tiers: list = []
+    current_section = None       # "tiers" | "pullbackTiers" | None
+    pending_line: float | None = None  # 暂存跨行的 line 值
+
+    # 按行扫描，识别 [tiers] / [pullbackTiers] 区段和其中的 {line, ratio} 对
+    for raw_line in text.split("\n"):
+        stripped = raw_line.strip()
+
+        # 检测段落标记
+        if re.search(r'pullbackTiers|pullback_tiers|回调', stripped, re.IGNORECASE):
+            current_section = "pullbackTiers"
+            pending_line = None
+            continue
+        if re.search(r'"tiers"\s*:', stripped) and "pullback" not in stripped.lower():
+            current_section = "tiers"
+            pending_line = None
+            continue
+
+        # 提取当前行的 line 和 ratio（处理单行 JSON "...},{..." 拆成多段）
+        for part in re.split(r'(?<=})', stripped):
+            line_match = re.search(r'"line"\s*:\s*(-?\d+\.?\d*)', part)
+            ratio_match = re.search(r'"ratio"\s*:\s*(-?\d+\.?\d*)', part)
+
+            if line_match and ratio_match:
+                # 单行同时有 line 和 ratio
+                tier = {"line": float(line_match.group(1)), "ratio": float(ratio_match.group(1))}
+                if current_section == "pullbackTiers":
+                    pullback_tiers.append(tier)
+                else:
+                    tiers.append(tier)
+                pending_line = None
+            elif line_match:
+                pending_line = float(line_match.group(1))
+            elif ratio_match and pending_line is not None:
+                # 跨行匹配到 ratio
+                tier = {"line": pending_line, "ratio": float(ratio_match.group(1))}
+                if current_section == "pullbackTiers":
+                    pullback_tiers.append(tier)
+                else:
+                    tiers.append(tier)
+                pending_line = None
+
+    if tiers:
+        result["tiers"] = tiers
+    if pullback_tiers:
+        result["pullbackTiers"] = pullback_tiers
+
+    # 提取标量字段
+    for m in _JSON_FIELD_FALLBACK.finditer(text):
+        if m.group(1):  # 字符串字段
+            result[m.group(1)] = m.group(2)
+        elif m.group(3) and m.group(4):  # 数字字段
+            result[m.group(3)] = float(m.group(4))
+
+    return result
+
+
+def _fix_json_content_quotes(text: str) -> str:
+    """修复 AI 在 JSON 字符串值内部误用 ASCII 双引号的问题。
+    
+    例如 DeepSeek 在 explanation 字段中写：
+        "explanation":"选择"上涨回调"策略"
+                        ^       ^  这两处 " 破坏了 JSON 结构
+    修复为：
+        "explanation":"选择\u201c上涨回调\u201d策略"
+    """
+    # 保护已正确转义的 \"
+    placeholder = "\x00ESCAPED_QUOTE\x00"
+    text = text.replace('\\"', placeholder)
+
+    # 策略：找到所有 " 的位置，标记哪些是结构性的（作为 JSON 键/值分隔符）
+    # 结构性的 " 满足以下条件之一：
+    #   1. 前面紧跟 { } , : [ ] 或空白
+    #   2. 后面紧跟 { } , : [ ] 或空白
+    result = list(text)
+    i = 0
+    while i < len(result):
+        if result[i] != '"':
+            i += 1
+            continue
+
+        # 判断前面的字符是否为 JSON 结构字符
+        prev_char = ''
+        j = i - 1
+        while j >= 0 and result[j] in ' \t\n\r':
+            j -= 1
+        if j >= 0:
+            prev_char = result[j]
+
+        # 判断后面的字符是否为 JSON 结构字符
+        next_char = ''
+        j = i + 1
+        while j < len(result) and result[j] in ' \t\n\r':
+            j += 1
+        if j < len(result):
+            next_char = result[j]
+
+        is_structural = (
+            prev_char in '{[,:' or
+            next_char in '}],:' or
+            (prev_char == '' and next_char in '}],:') or
+            (next_char == '' and prev_char in '{[,:') or
+            (prev_char.isdigit() and next_char.isdigit())  # 数字内的引号
+        )
+
+        if not is_structural:
+            # 可能是内容引号 → 替换为中文引号
+            result[i] = '\u201c'  # "
+            # 查找配对的右引号
+            j2 = i + 1
+            while j2 < len(result):
+                if result[j2] == '"':
+                    # 检查这个引号是否为结构性
+                    n_prev = ''
+                    k = j2 - 1
+                    while k > i and result[k] in ' \t\n\r':
+                        k -= 1
+                    if k > i:
+                        n_prev = result[k]
+                    if n_prev not in '{[,:':
+                        # 也是内容引号
+                        result[j2] = '\u201d'  # "
+                        i = j2
+                    break
+                j2 += 1
+        i += 1
+
+    text = ''.join(result)
+    # 恢复转义引号
+    text = text.replace(placeholder, '\\"')
+    return text
 
 
 # ==================== 系统提示词 ====================
@@ -261,29 +498,17 @@ def interpret_advice(
 
 # ==================== AI 宏观分析 ====================
 
-MACRO_ANALYSIS_PROMPT = """你是一位宏观经济与政策研究专家。请根据基金名称分析该基金所处的行业/赛道，结合当前（{current_date}）中国最新的国家政策方向和发展趋势，评估该基金受政策利好的程度。注意：政策变化频繁，必须以当前时间节点最新的政策为准，不要使用过时的信息。
+MACRO_ANALYSIS_PROMPT = """你是宏观经济政策研究员。分析该基金所属行业/赛道，结合当前（{current_date}）中国最新政策评估政策利好程度。注意以当前最新政策为准。输出纯JSON。
 
-请严格按以下 JSON 格式输出，不要包含 markdown 代码块标记，只输出纯 JSON：
+{"sector":"行业/赛道","policyScore":75,"keyPolicies":["政策1","政策2"],"trend":"趋势判断","aggressiveness":0.2,"analysis":"简要分析"}
 
-{"sector":"所属行业/赛道","policyScore":75,"keyPolicies":["政策1","政策2"],"trend":"趋势判断","aggressiveness":0.2,"analysis":"简要分析"}
-
-字段说明：
-- sector: 该基金对应的行业/赛道（如"半导体""新能源""消费""医疗""军工""AI科技""白酒""债市"等）
-- policyScore: 政策支持力度评分（0-100），越高越受政策支持
-  - 80-100: 国家重点战略方向（如芯片自主、新能源、AI、高端制造、军工、数字经济）
-  - 60-79: 有政策支撑但非核心（如消费升级、医疗健康、新基建）
-  - 40-59: 中性行业，无明显政策倾斜
-  - 20-39: 政策收紧或监管趋严的行业
-  - 0-19: 政策明确打压或限制的行业
-- keyPolicies: 关联的国家政策或战略（2-4条，如"十四五数字经济规划""新质生产力""国产替代""双碳目标"等）
-- trend: 一句话总结未来1-2年该赛道的政策趋势
-- aggressiveness: 策略调整系数（-0.5 ~ +0.5），正值表示可以更激进，负值表示应该更保守
-  - +0.3~+0.5: 政策大力支持，可大幅提高风险偏好
-  - +0.1~+0.3: 政策偏暖，可适当积极
-  - -0.1~+0.1: 中性，维持标准策略
-  - -0.3~-0.1: 政策不明朗，建议保守
-  - -0.5~-0.3: 政策风险较大，强烈建议保守
-- analysis: 50字以内简要分析"""
+字段规则:
+- sector: 行业/赛道(半导体/新能源/消费/医疗/军工/AI科技/白酒/债市等)
+- policyScore: 0-100分(80-100国家战略,60-79有支撑,40-59中性,20-39收紧,0-19打压)
+- keyPolicies: 2-4条关联国家政策(十四五数字经济/新质生产力/国产替代/双碳目标等)
+- trend: 一句话总结未来1-2年政策趋势
+- aggressiveness: -0.5~+0.5(+0.3激进,0中性,-0.3保守)
+- analysis: ≤50字"""
 
 
 def analyze_fund_macro(fund_name: str) -> dict:
@@ -295,7 +520,6 @@ def analyze_fund_macro(fund_name: str) -> dict:
          "trend": str, "aggressiveness": float, "analysis": str}
     """
     try:
-        client = _get_client()
         current_date = datetime.now().strftime("%Y年%m月%d日 %H:%M:%S")
 
         # 动态注入当前精确时间到系统提示词
@@ -314,34 +538,9 @@ def analyze_fund_macro(fund_name: str) -> dict:
             {"role": "user", "content": user_message},
         ]
 
-        response = client.chat.completions.create(
-            model=settings.LLM_MODEL,
-            messages=messages,
-            temperature=0.3,
-        )
-        text = response.choices[0].message.content.strip()
+        text = _call_llm_with_retry(messages, temperature=0.3)
         raw_text = text  # 保留原始内容用于错误日志
-
-        # 1. 处理 markdown 代码块
-        if "```" in text:
-            match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
-            if match:
-                text = match.group(1).strip()
-
-        # 2. 提取第一个完整 JSON 对象（处理 AI 在 JSON 前后加说明文字）
-        if not text.startswith("{"):
-            match = re.search(r"\{.*\}", text, re.DOTALL)
-            if match:
-                text = match.group(0).strip()
-
-        # 3. 清理常见格式问题：尾逗号（JSON 标准不允许）
-        text = re.sub(r",\s*(\}|\])", r"\1", text)
-
-        # 4. 清理 JSON 中未转义的控制字符（literal newline 等会导致 json.loads 失败）
-        text = text.replace("\n", " ").replace("\r", " ")
-        text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
-
-        result = json.loads(text)
+        result = _safe_parse_json(text)
         return {
             "sector": result.get("sector", "未知"),
             "policyScore": result.get("policyScore", 50),
@@ -386,55 +585,26 @@ def analyze_fund_macro(fund_name: str) -> dict:
 
 # ==================== AI 推荐加仓档位 ====================
 
-TIER_RECOMMEND_PROMPT = """你是一位资深基金投资策略师，擅长设计金字塔加仓方案和止盈止损策略。用户需要为一只基金配置完整的交易策略。
+TIER_RECOMMEND_PROMPT = """你是基金策略师。核心原则：【预算约束 > 政策分析】。输出纯JSON（不含markdown），字符串内用「」代替双引号。
 
-⚠️ 推荐优先级（核心原则）：【投入上限/剩余预算 > 宏观政策分析】
-- 投入上限是硬约束，加仓比例必须首先服务于"在预算范围内最大化资金使用效率"
-- 宏观政策分析仅作为辅助参考，在预算允许的范围内做小幅调整，不能颠覆预算主导的结论
-- 简单来说：先根据预算算出比例框架，再用宏观分析微调 10-20%，而不是反过来
+格式: {"strategyType":"downside","tiers":[{"line":-8,"ratio":5},{"line":-13,"ratio":10},{"line":-19,"ratio":18},{"line":-26,"ratio":30}],"pullbackTiers":[{"line":-3,"ratio":5},{"line":-6,"ratio":10},{"line":-10,"ratio":20},{"line":-15,"ratio":35}],"stopProfitLine":25,"stopLossLine":-30,"stopProfitRatio":20,"stopLossRatio":60,"strategyStyle":"预算充裕型","explanation":"..."}
 
-请严格按以下 JSON 格式输出，不要包含 markdown 代码块标记，只输出纯 JSON：
+【策略选择】收益率≤0→strategyType="downside"(越跌越买,tiers为主,pullbackTiers=[])；收益率>0→strategyType="pullback"(回调加仓,tiers作安全网,pullbackTiers为主)。
 
-{"tiers":[{"line":-8,"ratio":5},{"line":-13,"ratio":10},{"line":-19,"ratio":18},{"line":-26,"ratio":30}],"stopProfitLine":25,"stopLossLine":-30,"stopProfitRatio":20,"stopLossRatio":60,"strategyStyle":"标准策略","explanation":"你的解释"}
+【预算框架(硬约束)】ratio总和×初始本金 ≤ 剩余预算。覆盖率=剩余预算/初始本金。覆盖率越高越要大胆：
+≥10倍→4档之和100-300%+，且合计买入金额应占剩余预算的30-50%以上(例: 剩余9990/初始10时，4档ratio之和建议30000%-100000%，即3000-10000元，首档可达5000%-20000%)
+5-10倍→4档之和80-200%，合计金额占剩余预算20-40%
+2-5倍→4档之和50-100%，合计金额占剩余预算10-25%
+1-2倍→30-50%  0.5-1倍→15-30%  <0.5倍→≤15%  未设置→视为充裕
+⚠️ 覆盖率越高越要大胆，预算不充分利用是最大浪费！不要只盯着初始本金的小百分比！
 
-═══════════════════════════════════
-▌ 第一阶段：基于投入上限确定比例框架（主导）
-═══════════════════════════════════
+【档位设计】tiers: line从-6~-10%起步均匀分布，末档≤-35%，间隔4-8%，ratio逐档递增(末档是首档3-6倍)。pullbackTiers: line为-2~-18%从浅到深，绝对值不超过当前收益率。
 
-1. 核心约束：所有档位的 ratio 总和 × 初始本金的金额，不能超过「剩余预算」。这是不可突破的硬约束。
-2. 先看"预算覆盖率"（剩余预算 / 初始本金），这决定了你可以分配多高的比例：
-   - 预算覆盖率 ≥ 2.0 倍：预算充裕，可设较高比例（4档之和可达 50-70%），充分利用预算空间
-   - 预算覆盖率 1.0~2.0 倍：预算适中，比例中等（4档之和约 30-50%）
-   - 预算覆盖率 0.5~1.0 倍：预算偏紧，比例偏低（4档之和约 15-30%）
-   - 预算覆盖率 < 0.5 倍：预算紧张，比例保守（4档之和不超过 15%），量力而行
-   - 未设置投入上限（无上限）：视为预算覆盖率很大，可积极配置
+【宏观微调(辅助)】在预算框架内微调：policyScore≥80→比例上浮10-20%+间隔缩小1-2%；40-79→维持；<40→比例下调10-20%+间隔拉大1-2%。
 
-3. line（触发阈值，负数）：从浅到深均匀分布，第1档约-6~-10%，每档间隔约4~8%。最后一档不要超过 -35%
-4. ratio（买入比例，正数）：初始本金的百分比。越往后越大（金字塔加仓），比例递增明显
-5. 在预算允许的前提下，比例递增要明显——最后一档应该是第一档的 3-6 倍，体现金字塔结构
+【止盈止损】stopProfitLine: 股基15-35%,债基5-10%,持有<30天偏低。stopLossLine: 股基-20~-35%,保守型-15~-20%。stopProfitRatio: 15-30%。stopLossRatio: 50-80%。
 
-═══════════════════════════════════
-▌ 第二阶段：结合宏观政策微调（辅助）
-═══════════════════════════════════
-6. 我会在用户消息中提供「宏观政策分析」。在第一阶段确定的预算框架内，用宏观分析做有限度的调整：
-   - 政策大力支持（policyScore ≥ 80）：比例可在预算框架基础上上浮 10-20%，档位间隔可缩小 1-2%
-   - 政策中性（policyScore 40-79）：维持预算框架，不做系统性的宏观调整
-   - 政策风险较大（policyScore < 40）：比例可在预算框架基础上下调 10-20%，档位间隔可拉大 1-2%
-   ⚠️ 无论如何调整，总金额都不能突破剩余预算的硬约束
-
-═══════════════════════════════════
-▌ 止盈止损设计
-═══════════════════════════════════
-7. stopProfitLine（止盈触发线，正数，%）：偏股型基金 15-35%，债基 5-10%，持有天数 < 30天宜设低
-8. stopLossLine（止损触发线，负数，%）：偏股型通常 -20~-35%，保守型 -15~-20%
-9. stopProfitRatio（止盈卖出比例，正数，%）：15-30%，分批止盈降低踏空风险
-10. stopLossRatio（止损卖出比例，正数，%）：50-80%，尽量多割以保护本金
-
-═══════════════════════════════════
-▌ 输出字段
-═══════════════════════════════════
-11. strategyStyle: 用简短标签说明策略风格，如"预算充裕型""预算平衡型""预算紧张型""保守防御型"
-12. explanation 用 100 字以内中文解释推荐思路，要覆盖：预算约束判断（剩余预算/覆盖率）→ 加仓比例逻辑 → 宏观微调幅度（如适用）→ 止盈止损逻辑"""
+【style/explanation】strategyStyle选:"上涨回调型"/"预算充裕型"/"预算平衡型"/"保守防御型"。explanation≤100字: 策略选择→预算约束→比例逻辑→宏观微调(如适用)→止盈止损。pullback策略需解释为何回调加仓。"""
 
 
 def recommend_add_tiers(
@@ -459,28 +629,48 @@ def recommend_add_tiers(
          "strategyStyle": str, "explanation": str}
     """
     try:
-        client = _get_client()
-
         remaining = max_investment - total_buy_amount if max_investment > 0 else float("inf")
 
         # 计算预算覆盖率（剩余预算 / 初始本金），帮助 LLM 判断预算充裕程度
         if max_investment > 0 and initial_principal > 0:
             coverage_ratio = remaining / initial_principal
             coverage_desc = (
+                "极其充裕，请大胆推荐高位加仓！" if coverage_ratio >= 10 else
+                "非常充裕，可大幅提高加仓比例" if coverage_ratio >= 5 else
                 "充裕（可积极配置）" if coverage_ratio >= 2.0 else
                 "适中" if coverage_ratio >= 1.0 else
                 "偏紧" if coverage_ratio >= 0.5 else
                 "紧张（需保守）"
             )
             remaining_str = f"¥{remaining:,.0f}"
+
+            # 高覆盖率时额外强调，让 AI 不要保守
+            bold_hint = ""
+            if coverage_ratio >= 10:
+                bold_hint = (
+                    f"\n⚠️⚠️⚠️ 注意：预算覆盖率高达{coverage_ratio:.0f}倍！"
+                    f"用户设了 ¥{max_investment:,.0f} 的上限，目前只投了 ¥{total_buy_amount:,.0f}，"
+                    f"剩余 ¥{remaining:,.0f} 几乎没动。请务必大胆推荐高额加仓，4档总和至少{initial_principal * 1.0:,.0f}元起，"
+                    f"不要推荐像 5%、10% 这种杯水车薪的比例！"
+                )
+            elif coverage_ratio >= 5:
+                bold_hint = (
+                    f"\n⚠️⚠️ 注意：预算覆盖率{coverage_ratio:.0f}倍，空间很大。"
+                    f"用户当前只投了 ¥{total_buy_amount:,.0f}，还有 ¥{remaining:,.0f} 预算。"
+                    f"请大胆提高加仓比例，不要过于保守！"
+                )
+
             budget_info = (
                 f"投入上限：¥{max_investment:,.2f}\n"
+                f"已投入金额：¥{total_buy_amount:,.2f}\n"
                 f"剩余可投入预算：{remaining_str}（预算覆盖率 = 剩余预算/初始本金 = {coverage_ratio:.1f}倍，预算状态：{coverage_desc}）"
+                f"{bold_hint}"
             )
         else:
             remaining_str = "无上限（未设置最大投入）"
             budget_info = (
                 f"投入上限：未设置\n"
+                f"已投入金额：¥{total_buy_amount:,.2f}\n"
                 f"剩余可投入预算：无上限（预算覆盖率视为无穷大，可积极配置）"
             )
 
@@ -504,12 +694,23 @@ def recommend_add_tiers(
                 f"调整建议：{policy_advice}（调整系数 {aggressiveness:+.1f}）\n"
             )
 
+        # 高预算覆盖率时的醒目提醒
+        if max_investment > 0 and initial_principal > 0:
+            cov = remaining / initial_principal
+            bold_prefix = ""
+            if cov >= 10:
+                bold_prefix = "⚠️⚠️⚠️ 重要：用户预算极其充裕（覆盖率 {}倍）！不要建议保守的5%、10%比例，请大胆把档位比例设高，让用户充分用上预算！\n\n".format(int(cov))
+            elif cov >= 5:
+                bold_prefix = "⚠️⚠️ 注意：用户预算很充裕（覆盖率 {}倍），加仓比例可以大胆一些。\n\n".format(int(cov))
+        else:
+            bold_prefix = ""
+
         user_message = (
             f"请为以下基金推荐 4 档金字塔加仓方案和止盈止损线。\n"
-            f"记住：先看预算决定比例框架，再用宏观分析微调。\n\n"
+            f"记住：先看预算决定比例框架，再用宏观分析微调。\n"
+            f"{bold_prefix}"
             f"基金名称：{fund_name}\n"
             f"初始本金：¥{initial_principal:,.2f}\n"
-            f"已投入金额：¥{total_buy_amount:,.2f}\n"
             f"{budget_info}\n"
             f"当前收益率：{current_return_rate:.2f}%\n"
             f"当前市值：¥{current_market_value:,.2f}\n"
@@ -522,37 +723,23 @@ def recommend_add_tiers(
             {"role": "user", "content": user_message},
         ]
 
-        response = client.chat.completions.create(
-            model=settings.LLM_MODEL,
-            messages=messages,
-            temperature=0.3,
-        )
-        text = response.choices[0].message.content.strip()
+        # 带重试的 LLM 调用 + 安全 JSON 解析
+        text = _call_llm_with_retry(messages, temperature=0.3, max_tokens=2000)
+        try:
+            result = _safe_parse_json(text)
+        except json.JSONDecodeError:
+            # 安全解析失败，尝试暴力兜底
+            logger.warning("安全 JSON 解析失败，尝试暴力兜底。原始文本前200字: %s...", text[:200])
+            result = _brute_parse_json(text)
+            if not result.get("tiers"):
+                raise RuntimeError("AI 返回格式异常，请重试")
+            logger.warning("暴力兜底解析成功，提取到 %d 个档位", len(result["tiers"]))
 
-        # 尝试解析 JSON，处理 markdown 代码块
-        if "```" in text:
-            # 提取代码块内容
-            match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
-            if match:
-                text = match.group(1).strip()
-
-        # 尝试提取第一个完整 JSON 对象（处理 AI 可能在 JSON 前后加说明文字的情况）
-        if not text.startswith("{"):
-            json_match = re.search(r"\{.*\}", text, re.DOTALL)
-            if json_match:
-                text = json_match.group(0).strip()
-
-        # 清理常见格式问题：尾逗号
-        text = re.sub(r",\s*(\}|\])", r"\1", text)
-
-        # 清理 JSON 中未转义的控制字符（literal newline 等会导致 json.loads 失败）
-        text = text.replace("\n", " ").replace("\r", " ")
-        text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
-
-        result = json.loads(text)
         if "tiers" in result:
             return {
+                "strategyType": result.get("strategyType", "downside"),
                 "tiers": result["tiers"],
+                "pullbackTiers": result.get("pullbackTiers", []),
                 "stopProfitLine": result.get("stopProfitLine", 0),
                 "stopLossLine": result.get("stopLossLine", 0),
                 "stopProfitRatio": result.get("stopProfitRatio", 0),
@@ -565,8 +752,12 @@ def recommend_add_tiers(
     except RuntimeError:
         raise
     except json.JSONDecodeError as e:
-        logger.error("AI 推荐档位 JSON 解析失败: %s, 原始: %s", e, text)
-        raise RuntimeError(f"AI 返回格式异常，请重试")
+        logger.error("AI 推荐档位 JSON 解析失败: %s, 原始: %s", e, text[:500])
+        raise RuntimeError("AI 返回格式异常，请重试")
+    except ValueError as e:
+        # _brute_parse_json 也没提取到 tiers
+        logger.error("AI 推荐档位解析失败（缺少关键字段）: %s, 原始: %s", e, text[:500])
+        raise RuntimeError("AI 返回格式异常，请重试")
     except Exception as e:
         logger.error("AI 推荐档位失败: %s", e)
         raise RuntimeError(f"AI 服务暂时不可用: {e}")

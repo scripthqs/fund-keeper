@@ -166,6 +166,23 @@
                 <van-field v-model.number="form.addTiers[i-1].ratio" label="买入(%)" type="number" size="small" class="flex-1" />
               </div>
             </div>
+
+            <!-- 上涨回调加仓策略 -->
+            <template v-if="form.strategyType === 'pullback' && form.pullbackTiers.length">
+              <div class="flex items-center gap-1 px-3 pt-2">
+                <span class="text-sm font-medium" style="color:#fa8c16">📈 上涨回调加仓</span>
+                <span class="text-xs px-1 py-0.5 rounded" style="background:rgba(250,140,22,0.1);color:#fa8c16">牛市策略</span>
+              </div>
+              <div class="px-3 text-xs" style="color:var(--text-secondary)">
+                在上涨趋势中，每当基金从近期高点回调一定比例时买入，不错过牛市行情
+              </div>
+              <div class="tier-grid p-3 flex flex-col gap-2" :key="pullbackTierKey">
+                <div v-for="i in form.pullbackTiers.length" :key="'pb'+i" class="flex items-center gap-2">
+                  <van-field v-model.number="form.pullbackTiers[i-1].line" :label="`回调${i}档(%)`" type="number" size="small" class="flex-1" />
+                  <van-field v-model.number="form.pullbackTiers[i-1].ratio" label="买入(%)" type="number" size="small" class="flex-1" />
+                </div>
+              </div>
+            </template>
           </van-cell-group>
 
           <!-- ===== 基金独立止盈止损 ===== -->
@@ -223,6 +240,13 @@ const defaultTiers = () => [
   { line: -22, ratio: 28 },
 ]
 
+const defaultPullbackTiers = () => [
+  { line: -3, ratio: 5 },
+  { line: -6, ratio: 10 },
+  { line: -10, ratio: 20 },
+  { line: -15, ratio: 35 },
+]
+
 // 新建基金默认档位（与默认策略一致，可按需修改）
 
 const form = ref({
@@ -230,6 +254,7 @@ const form = ref({
   initialPrincipal: 0, buyDate: new Date().toISOString().split('T')[0],
   currentMarketValue: 0, totalBuyAmount: 0, totalSellAmount: 0, currentReturnRate: 0,
   maxInvestment: 0, addTiers: defaultTiers(),
+  strategyType: 'downside', pullbackTiers: [],
   stopProfitLine: 0, stopLossLine: 0, stopProfitRatio: 0, stopLossRatio: 0,
 })
 
@@ -242,9 +267,9 @@ const hasFormData = computed(() => {
   // 编辑模式：对比快照，检查是否有任何字段被修改
   if (snap) {
     for (const key of Object.keys(snap)) {
-      if (key === 'addTiers') {
-        const a = f.addTiers || []
-        const b = snap.addTiers || []
+      if (key === 'addTiers' || key === 'pullbackTiers') {
+        const a = f[key] || []
+        const b = snap[key] || []
         if (a.length !== b.length) return true
         if (a.some((t, i) => t.line !== b[i].line || t.ratio !== b[i].ratio)) return true
       } else if (f[key] !== snap[key]) {
@@ -262,6 +287,8 @@ const isValidCode = computed(() => /^\d{6}$/.test(form.value.fundCode || ''))
 
 /** 档位内容指纹，变化时强制重建整个档位区域 */
 const tierKey = computed(() => (form.value.addTiers || []).map(t => t.line + ',' + t.ratio).join('|'))
+/** 回调加仓档位内容指纹 */
+const pullbackTierKey = computed(() => (form.value.pullbackTiers || []).map(t => t.line + ',' + t.ratio).join('|'))
 
 /** 自动计算总收益率 = (市值 - 累计买入 + 累计卖出) ÷ 累计买入 × 100 */
 const autoReturnRate = computed(() => {
@@ -275,6 +302,11 @@ const fmtReturnRate = computed(() => {
   const r = autoReturnRate.value
   if (r == null) return '--'
   return (r >= 0 ? '+' : '') + r.toFixed(2) + '%'
+})
+
+/** 自动收益率变化时同步到表单字段，避免 AI 推荐拿到旧值 */
+watch(autoReturnRate, (val) => {
+  if (val != null) form.value.currentReturnRate = val
 })
 
 /** 宏观分析背景色 */
@@ -356,6 +388,8 @@ watch(editingFundId, async (id) => {
         ...fund,
         maxInvestment: fund.maxInvestment ?? 0,
         addTiers: fund.addTiers?.length ? [...fund.addTiers] : defaultTiers(),
+        strategyType: fund.strategyType || 'downside',
+        pullbackTiers: fund.pullbackTiers?.length ? [...fund.pullbackTiers] : [],
         stopProfitLine: fund.stopProfitLine ?? 0,
         stopLossLine: fund.stopLossLine ?? 0,
         stopProfitRatio: fund.stopProfitRatio ?? 0,
@@ -366,7 +400,7 @@ watch(editingFundId, async (id) => {
     }
     hasInteracted.value = false
   } else {
-    Object.assign(form.value, { name: '', fundCode: '', fundShares: 0, initialPrincipal: 0, buyDate: new Date().toISOString().split('T')[0], currentMarketValue: 0, totalBuyAmount: 0, totalSellAmount: 0, currentReturnRate: 0, maxInvestment: 0, addTiers: defaultTiers(), stopProfitLine: 0, stopLossLine: 0, stopProfitRatio: 0, stopLossRatio: 0 })
+    Object.assign(form.value, { name: '', fundCode: '', fundShares: 0, initialPrincipal: 0, buyDate: new Date().toISOString().split('T')[0], currentMarketValue: 0, totalBuyAmount: 0, totalSellAmount: 0, currentReturnRate: 0, maxInvestment: 0, addTiers: defaultTiers(), strategyType: 'downside', pullbackTiers: [], stopProfitLine: 0, stopLossLine: 0, stopProfitRatio: 0, stopLossRatio: 0 })
     // 新增模式：清空快照，使用 hasFormData 的增量检查逻辑
     formSnapshot.value = null
     hasInteracted.value = false
@@ -394,12 +428,18 @@ async function aiRecommend() {
       totalBuyAmount: f.totalBuyAmount || f.initialPrincipal,
       initialPrincipal: f.initialPrincipal,
       maxInvestment: f.maxInvestment || 0,
-      currentReturnRate: f.currentReturnRate || 0,
+      currentReturnRate: autoReturnRate.value ?? (f.currentReturnRate || 0),
       currentMarketValue: f.currentMarketValue || f.initialPrincipal,
       holdDays,
     })
     if (result.tiers?.length) {
       form.value.addTiers = result.tiers.map(t => ({ line: t.line, ratio: t.ratio }))
+    }
+    form.value.strategyType = result.strategyType || 'downside'
+    if (result.pullbackTiers?.length) {
+      form.value.pullbackTiers = result.pullbackTiers.map(t => ({ line: t.line, ratio: t.ratio }))
+    } else {
+      form.value.pullbackTiers = []
     }
     if (result.stopProfitLine) form.value.stopProfitLine = result.stopProfitLine
     if (result.stopLossLine) form.value.stopLossLine = result.stopLossLine
@@ -436,6 +476,7 @@ async function save() {
   try {
     // 如果所有档位比例都为 0 或无有效值，视为不使用独立配置
     const validTiers = (form.value.addTiers || []).filter(t => t.ratio > 0 && t.line < 0)
+    const validPullbackTiers = (form.value.pullbackTiers || []).filter(t => t.ratio > 0 && t.line < 0)
     const raw = form.value
     const data = {
       name: raw.name,
@@ -449,6 +490,8 @@ async function save() {
       currentReturnRate: 0,
       maxInvestment: cleanNumeric(raw.maxInvestment),
       addTiers: validTiers,
+      strategyType: raw.strategyType || 'downside',
+      pullbackTiers: validPullbackTiers,
       stopProfitLine: cleanNumeric(raw.stopProfitLine),
       stopLossLine: cleanNumeric(raw.stopLossLine),
       stopProfitRatio: cleanNumeric(raw.stopProfitRatio),

@@ -298,6 +298,7 @@ function buildFundContext() {
     ctx += `【${f.name}】\n  初始本金：¥${fmtNum(f.initialPrincipal)} | 当前市值：¥${fmtNum(f.currentMarketValue)}\n  累计买入：¥${fmtNum(f.totalBuyAmount)} | 累计卖出：¥${fmtNum(f.totalSellAmount)}\n  当前收益率：${fmtSigned(f.currentReturnRate)}% | 持有：${daysBetween(f.buyDate)}天 | 买入日期：${f.buyDate}\n`
     if (f.maxInvestment > 0) ctx += `  投入上限：¥${fmtNum(f.maxInvestment)}\n`
     if (f.addTiers?.length) ctx += `  加仓档位：${f.addTiers.map(t => t.line + '%→买' + t.ratio + '%').join(' | ')}\n`
+    if (f.strategyType === 'pullback' && f.pullbackTiers?.length) ctx += `  回调加仓档位：${f.pullbackTiers.map(t => t.line + '%→买' + t.ratio + '%').join(' | ')}\n`
     if (f.stopProfitLine) ctx += `  止盈线：${f.stopProfitLine}%（卖出${f.stopProfitRatio || '?'}%）\n`
     if (f.stopLossLine) ctx += `  止损线：${f.stopLossLine}%（卖出${f.stopLossRatio || '?'}%）\n`
   })
