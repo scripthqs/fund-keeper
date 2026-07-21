@@ -5,14 +5,15 @@
 
 import { fmtSigned, fmtNum, daysBetween } from './helpers'
 import { B, mulDiv, percentGrow, round, toNum } from './bigMath'
+import { DEFAULT_FUND_TIERS } from './constants'
 
 /** 增强版分析函数 */
 export function analyzeFundEnhanced(fund, todayChange, totalReturn, config, peakReturnRate) {
   const holdDays = daysBetween(fund.buyDate)
 
-  // 合并基金独立档位：基金自己的 addTiers 优先于全局配置
-  const effectiveAddTiers = (fund.addTiers && fund.addTiers.length > 0) ? fund.addTiers : config.addTiers
-  const effectiveAddMode = (fund.addTiers && fund.addTiers.length > 0) ? 'multi' : config.addPositionMode
+  // 基金自己的 addTiers 优先，无则使用默认档位
+  const effectiveAddTiers = (fund.addTiers && fund.addTiers.length > 0) ? fund.addTiers : DEFAULT_FUND_TIERS
+  const effectiveAddMode = 'multi'
 
   // 合并基金独立止盈止损（非零值才覆盖全局）
   const effectiveStopProfitLine = fund.stopProfitLine || config.stopProfitLine
@@ -28,11 +29,7 @@ export function analyzeFundEnhanced(fund, todayChange, totalReturn, config, peak
     // 已在加仓区域 → 即使当日暴跌也应该继续评估加仓（连跌多天后单日再暴跌，反而是好买点）
     let hitBuyZone = false
     if (!hitStopLoss) {
-      if (effectiveAddMode === 'multi' && effectiveAddTiers?.length) {
-        hitBuyZone = totalReturn <= Math.max(...effectiveAddTiers.map(t => t.line))
-      } else {
-        hitBuyZone = totalReturn <= config.addPositionLine
-      }
+      hitBuyZone = totalReturn <= Math.max(...effectiveAddTiers.map(t => t.line))
     }
     // 既没触发止损也没进入加仓区 → 纯粹的单日极端波动，暂停操作
     if (!hitStopLoss && !hitBuyZone) {
@@ -43,7 +40,7 @@ export function analyzeFundEnhanced(fund, todayChange, totalReturn, config, peak
   // 规则0.5：止损
   if (effectiveEnableStopLoss && totalReturn <= effectiveStopLossLine) {
     const sellAmount = round(mulDiv(fund.currentMarketValue, effectiveStopLossRatio, 100))
-    return { type: 'stop_loss', title: '🛑 触发止损线！', message: `当前总收益率 ${fmtSigned(totalReturn)}%，已触发止损线（≤${effectiveStopLossLine}%）。持有 ${holdDays} 天，建议卖出市值的 ${effectiveStopLossRatio}%，即 ¥${fmtNum(sellAmount)} 元止损离场。`, cssClass: 'advice-extreme', actionAmount: sellAmount, actionType: '卖出', isStopLoss: true }
+    return { type: 'stop_loss', title: '🛑 触发止损线！', message: `预计今日总收益变为${fmtSigned(totalReturn)}%，已触发止损线（≤${effectiveStopLossLine}%）。持有 ${holdDays} 天，建议卖出市值的 ${effectiveStopLossRatio}%，即 ¥${fmtNum(sellAmount)} 元止损离场。`, cssClass: 'advice-extreme', actionAmount: sellAmount, actionType: '卖出', isStopLoss: true }
   }
 
   // 规则1：移动止盈
@@ -58,34 +55,26 @@ export function analyzeFundEnhanced(fund, todayChange, totalReturn, config, peak
   // 规则2：固定止盈
   if (totalReturn >= effectiveStopProfitLine) {
     if (holdDays < config.freeDays) {
-      return { type: 'sell_blocked', title: '🛑 止盈触发但持有不足', message: `当前总收益率 ${fmtSigned(totalReturn)}%，已触发止盈线（≥${effectiveStopProfitLine}%），但持有仅 ${holdDays} 天（不足 ${config.freeDays} 天），暂不卖出避免赎回费。剩余 ${config.freeDays - holdDays} 天即可操作。`, cssClass: 'advice-sell', actionAmount: null }
+      return { type: 'sell_blocked', title: '🛑 止盈触发但持有不足', message: `预计今日总收益变为${fmtSigned(totalReturn)}%，已触发止盈线（≥${effectiveStopProfitLine}%），但持有仅 ${holdDays} 天（不足 ${config.freeDays} 天），暂不卖出避免赎回费。剩余 ${config.freeDays - holdDays} 天即可操作。`, cssClass: 'advice-sell', actionAmount: null }
     }
     const sellAmount = round(mulDiv(fund.currentMarketValue, effectiveStopProfitRatio, 100))
-    return { type: 'sell', title: '🎯 触发止盈！', message: `当前总收益率 ${fmtSigned(totalReturn)}%，已触发止盈线（≥${effectiveStopProfitLine}%）。持有 ${holdDays} 天，建议卖出当前市值的 ${effectiveStopProfitRatio}%，即 ¥${fmtNum(sellAmount)} 元。`, cssClass: 'advice-sell', actionAmount: sellAmount, actionType: '卖出' }
+    return { type: 'sell', title: '🎯 触发止盈！', message: `预计今日总收益变为${fmtSigned(totalReturn)}%，已触发止盈线（≥${effectiveStopProfitLine}%）。持有 ${holdDays} 天，建议卖出当前市值的 ${effectiveStopProfitRatio}%，即 ¥${fmtNum(sellAmount)} 元。`, cssClass: 'advice-sell', actionAmount: sellAmount, actionType: '卖出' }
   }
 
   // 规则3：加仓
-  if (effectiveAddMode === 'multi') {
-    const multiBuy = getMultiTierAddBuy(fund, effectiveAddTiers, totalReturn)
-    if (multiBuy) {
-      return { type: 'buy', title: `📉 触发第 ${multiBuy.tierIdx} 档加仓！`, message: `当前总收益率 ${fmtSigned(totalReturn)}%，触发第 ${multiBuy.tierIdx} 档加仓线（≤${multiBuy.line}%）。建议买入初始本金的 ${multiBuy.ratio}%，即 ¥${fmtNum(multiBuy.buyAmount)} 元（金字塔策略：越跌越买）。`, cssClass: 'advice-buy', actionAmount: multiBuy.buyAmount, actionType: '买入' }
-    }
-  } else {
-    const singleBuy = getSingleAddBuy(fund, config, totalReturn)
-    if (singleBuy) {
-      return { type: 'buy', title: '📉 触发加仓！', message: `当前总收益率 ${fmtSigned(totalReturn)}%，已触发加仓线（≤${config.addPositionLine}%）。建议买入初始本金的 5%-10%，即 ¥${fmtNum(singleBuy.minBuy)} - ¥${fmtNum(singleBuy.maxBuy)} 元。`, cssClass: 'advice-buy', actionAmount: singleBuy.minBuy, actionAmountMax: singleBuy.maxBuy, actionType: '买入' }
-    }
+  const multiBuy = getMultiTierAddBuy(fund, effectiveAddTiers, totalReturn)
+  if (multiBuy) {
+    return { type: 'buy', title: `📉 触发第 ${multiBuy.tierIdx} 档加仓！`, message: `预计今日总收益变为${fmtSigned(totalReturn)}%，触发第 ${multiBuy.tierIdx} 档加仓线（≤${multiBuy.line}%）。建议买入初始本金的 ${multiBuy.ratio}%，即 ¥${fmtNum(multiBuy.buyAmount)} 元（金字塔策略：越跌越买）。`, cssClass: 'advice-buy', actionAmount: multiBuy.buyAmount, actionType: '买入' }
   }
 
   // 规则4：接近加仓区域
-  const closestTier = effectiveAddMode === 'multi' && effectiveAddTiers
-    ? [...effectiveAddTiers].sort((a, b) => b.line - a.line).find(t => totalReturn > t.line && totalReturn < t.line + 3) : null
+  const closestTier = [...effectiveAddTiers].sort((a, b) => b.line - a.line).find(t => totalReturn > t.line && totalReturn < t.line + 3)
   if (closestTier) {
-    return { type: 'near_add', title: '🔍 接近加仓区域', message: `当前收益率 ${fmtSigned(totalReturn)}%，距离最近加仓档（${closestTier.line}%）还有 ${(totalReturn - closestTier.line).toFixed(1)}%。耐心等待，不要急着出手。`, cssClass: 'advice-hold', actionAmount: null }
+    return { type: 'near_add', title: '🔍 接近加仓区域', message: `预计今日总收益变为${fmtSigned(totalReturn)}%，距离最近加仓档（${closestTier.line}%）还有 ${(totalReturn - closestTier.line).toFixed(1)}%。耐心等待，不要急着出手。`, cssClass: 'advice-hold', actionAmount: null }
   }
 
   // 规则5：持有不动
-  return { type: 'hold', title: '✋ 持有不动', message: `当前收益率 ${fmtSigned(totalReturn)}%，在安全区间内，建议继续持有，无需操作。`, cssClass: 'advice-hold', actionAmount: null }
+  return { type: 'hold', title: '✋ 持有不动', message: `预计今日总收益变为${fmtSigned(totalReturn)}%，在安全区间内，建议继续持有，无需操作。`, cssClass: 'advice-hold', actionAmount: null }
 }
 
 /** 检查移动止盈 */
@@ -112,12 +101,6 @@ export function getMultiTierAddBuy(fund, addTiers, totalReturn) {
     }
   }
   return null
-}
-
-/** 单档加仓 */
-export function getSingleAddBuy(fund, config, totalReturn) {
-  if (totalReturn > config.addPositionLine) return null
-  return { minBuy: round(mulDiv(fund.initialPrincipal, 5, 100)), maxBuy: round(mulDiv(fund.initialPrincipal, 10, 100)) }
 }
 
 /** 安全垫 */
@@ -204,10 +187,11 @@ export function calcHealthScore(fund, config, allFunds) {
   const effProfit = fund.stopProfitLine || config.stopProfitLine
   const effLoss = fund.stopLossLine || config.stopLossLine
   const effLossEnabled = effLoss < 0
+  const firstTierLine = (fund.addTiers && fund.addTiers.length > 0) ? Math.max(...fund.addTiers.map(t => t.line)) : DEFAULT_FUND_TIERS[0].line
 
   if (ret >= effProfit) { score += 20; details.push({ label: '止盈区间', score: 20, color: '#22c55e', text: '收益达标，可考虑止盈' }) }
   else if (ret > 0) { const b = round(B(ret).div(effProfit).times(15)); score += b; details.push({ label: '正收益', score: Math.round(b), color: '#22c55e', text: '持仓盈利中，趋势良好' }) }
-  else if (ret > config.addPositionLine + 5) { score -= 5; details.push({ label: '小幅亏损', score: -5, color: '#f59e0b', text: '小额浮亏，尚可接受' }) }
+  else if (ret > firstTierLine + 5) { score -= 5; details.push({ label: '小幅亏损', score: -5, color: '#f59e0b', text: '小额浮亏，尚可接受' }) }
   else if (effLossEnabled && ret <= effLoss) { score -= 20; details.push({ label: '止损警告', score: -20, color: '#ef4444', text: '触发止损线，风险极高' }) }
   else { score -= 10; details.push({ label: '亏损中', score: -10, color: '#ef4444', text: '亏损幅度较大，需关注' }) }
 

@@ -162,7 +162,6 @@ async function fetchInterpretation() {
       configInfo: {
         stopProfitLine: config.stopProfitLine,
         stopLossLine: config.stopLossLine,
-        addPositionLine: config.addPositionLine,
         trailingStop: config.trailingStop,
       },
     })

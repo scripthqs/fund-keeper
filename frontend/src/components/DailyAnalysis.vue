@@ -15,8 +15,8 @@
         <van-button type="primary" round size="small" @click="$emit('addFund')">+ 添加基金</van-button>
       </div>
 
-      <!-- Vant 折叠面板（默认全部折叠，点击可收回，允许多个展开） -->
-      <van-collapse v-else v-model="activeNames" @change="onCollapseChange" :border="false">
+      <!-- Vant 折叠面板（手风琴模式：展开一个自动收起其他） -->
+      <van-collapse v-else v-model="activeNames" accordion @change="onCollapseChange" :border="false">
         <van-swipe-cell v-for="fund in funds" :key="fund.id">
           <van-collapse-item
             :name="String(fund.id)"
@@ -49,7 +49,7 @@
                   :class="profitRateOf(fund) >= 0 ? 'text-red-500' : 'text-green-500'"
                 >{{ fmtSigned(profitRateOf(fund)) }}%</div>
                 <div v-if="fundStates[fund.id]?.todayChange != null && !isNaN(fundStates[fund.id]?.todayChange)" class="text-xs mt-0.5">
-                  <span :class="fundStates[fund.id]?.todayChange >= 0 ? 'text-red-500' : 'text-green-500'">
+                  <span class="whitespace-nowrap" :class="fundStates[fund.id]?.todayChange >= 0 ? 'text-red-500' : 'text-green-500'">
                     今日 {{ fmtSigned(fundStates[fund.id]?.todayChange) }}% / {{ fmtSigned(fundStates[fund.id]?.todayProfit) }}元
                   </span>
                 </div>
@@ -227,8 +227,8 @@ const showAdvice = inject('showAdvice')
 const analysisData = inject('analysisData')
 const funds = store.funds
 
-// van-collapse 数组模式，空数组 = 全部折叠
-const activeNames = ref([])
+// van-collapse 手风琴模式，空字符串 = 全部折叠
+const activeNames = ref('')
 
 // 数字输入的显示/解析（避免 v-model.number + null 报错）
 function displayNumber(val) {
@@ -282,7 +282,7 @@ watch(funds, () => initAllStates(), { immediate: true, deep: true })
 /** 折叠面板展开/收起时触发，自动获取今日涨跌幅 */
 function onCollapseChange(name) {
   if (!name) return
-  const fund = funds.value.find(f => String(f.id) === name[0])
+  const fund = funds.value.find(f => String(f.id) === name)
 
   if (!fund || !fund.fundCode) return
   const s = ensureState(fund.id)

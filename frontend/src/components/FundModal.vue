@@ -126,7 +126,7 @@
           <!-- ===== 基金独立加仓配置 ===== -->
           <van-cell-group inset style="margin-top:12px">
             <div class="flex items-center justify-between px-3 py-2">
-              <span class="text-sm font-medium" style="color:var(--text-primary)">📊 加仓档位配置（覆盖全局）</span>
+              <span class="text-sm font-medium" style="color:var(--text-primary)">📊 加仓档位配置</span>
               <van-button size="mini" round plain type="primary" :loading="aiRecommending" @click="aiRecommend">🤖 AI 推荐</van-button>
             </div>
 
@@ -166,14 +166,11 @@
                 <van-field v-model.number="form.addTiers[i-1].ratio" label="买入(%)" type="number" size="small" class="flex-1" />
               </div>
             </div>
-            <div class="px-3 pb-3 text-xs text-right" style="color:var(--text-secondary)">
-              留空或全部为 0 则使用全局配置
-            </div>
           </van-cell-group>
 
           <!-- ===== 基金独立止盈止损 ===== -->
           <van-cell-group inset style="margin-top:12px">
-            <span class="px-3 py-2 text-sm font-medium" style="color:var(--text-primary);display:block">🎯 止盈止损配置（覆盖全局）</span>
+            <span class="px-3 py-2 text-sm font-medium" style="color:var(--text-primary);display:block">🎯 止盈止损配置</span>
             <div class="tier-grid p-3 grid grid-cols-2 gap-2">
               <van-field v-model.number="form.stopProfitLine" label="止盈线(%)" type="number" size="small" placeholder="如 25" />
               <van-field v-model.number="form.stopProfitRatio" label="止盈卖出(%)" type="number" size="small" placeholder="如 20" />
@@ -225,6 +222,8 @@ const defaultTiers = () => [
   { line: -17, ratio: 18 },
   { line: -22, ratio: 28 },
 ]
+
+// 新建基金默认档位（与默认策略一致，可按需修改）
 
 const form = ref({
   name: '', fundCode: '', fundShares: 0,

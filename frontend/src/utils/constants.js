@@ -1,17 +1,20 @@
 /**
  * 默认配置（与后端 database.py 中的 DEFAULT_CONFIG 对应）
  */
+/** 新建基金默认加仓档位 */
+export const DEFAULT_FUND_TIERS = [
+  { line: -8, ratio: 5 },
+  { line: -12, ratio: 10 },
+  { line: -17, ratio: 18 },
+  { line: -22, ratio: 28 },
+]
+
 export const DEFAULT_CONFIG = {
   style: '激进型',
   stopProfitLine: 30,
   addPositionLine: -20,
   addPositionMode: 'multi',
-  addTiers: [
-    { line: -8, ratio: 5 },
-    { line: -12, ratio: 10 },
-    { line: -17, ratio: 18 },
-    { line: -22, ratio: 28 },
-  ],
+  addTiers: DEFAULT_FUND_TIERS,
   stopProfitRatio: 10,
   trailingStop: 15,
   useTrailingStop: true,

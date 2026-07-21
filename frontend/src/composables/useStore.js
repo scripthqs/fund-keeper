@@ -115,14 +115,17 @@ async function loadForTab(tabName, showLoading = false) {
   try {
     switch (tabName) {
       case 'holdings':
+        // 持仓 tab 需要 AI 状态来驱动"心情加油站"
+        await Promise.all([loadFundsAndConfig(), loadSnapshots(), loadChatAndHealth()])
+        break
       case 'trade':        // 交易 tab 也需要基金列表做选择器
-        await Promise.all([loadFundsAndConfig(), tabName === 'holdings' ? loadSnapshots() : loadHistoryData()])
+        await Promise.all([loadFundsAndConfig(), loadHistoryData(), loadChatAndHealth()])
         break
       case 'strategy':
         await Promise.all([loadFundsAndConfig(), loadChatAndHealth()])
         break
       case 'mine':
-        await Promise.all([loadFundsAndConfig(), loadHistoryData()])
+        await Promise.all([loadFundsAndConfig(), loadHistoryData(), loadChatAndHealth()])
         break
     }
   } catch (e) {
@@ -141,11 +144,13 @@ async function refreshForTab(tabName) {
       _fundsLoaded.value = false
       _configLoaded.value = false
       _snapshotsLoaded.value = false
+      _healthLoaded.value = false
       break
     case 'trade':
       _fundsLoaded.value = false
       _configLoaded.value = false
       _historyLoaded.value = false
+      _healthLoaded.value = false
       break
     case 'strategy':
       _fundsLoaded.value = false
@@ -157,6 +162,7 @@ async function refreshForTab(tabName) {
       _fundsLoaded.value = false
       _configLoaded.value = false
       _historyLoaded.value = false
+      _healthLoaded.value = false
       break
   }
   await loadForTab(tabName)
@@ -283,8 +289,7 @@ function buildFundContext() {
   let ctx = '以下是用户当前的基金持仓数据：\n'
   ctx += `投资策略：${config.style}型\n`
   ctx += `- 止盈线：+${config.stopProfitLine}% | 止盈卖出比例：${config.stopProfitRatio}%\n`
-  ctx += `- 加仓模式：${config.addPositionMode === 'multi' ? '多档金字塔加仓' : '单档加仓(' + config.addPositionLine + '%)'}\n`
-  if (config.addPositionMode === 'multi' && config.addTiers) ctx += `  加仓档位：${config.addTiers.map(t => t.line + '%→买' + t.ratio + '%').join(' | ')}\n`
+  ctx += `- 加仓策略：每只基金独立配置金字塔档位（见下方各基金数据）\n`
   ctx += `- 移动止盈：${config.useTrailingStop ? '启用(回撤>' + config.trailingStop + '%)' : '未启用'}\n`
   ctx += `- 止损保护：${config.enableStopLoss ? '启用(≤' + config.stopLossLine + '%卖' + config.stopLossRatio + '%)' : '未启用'}\n`
   ctx += `- 极端波动线：±${config.extremeVolatility}% | 赎回费豁免：${config.freeDays}天\n`

@@ -22,23 +22,6 @@
         </van-cell>
       </van-cell-group>
 
-      <!-- 加仓 -->
-      <van-cell-group v-show="activeTab === 'addPosition'" inset>
-        <van-cell title="加仓模式" is-link :value="c.addPositionMode === 'multi' ? '多档加仓' : '单档加仓'" @click="showModePicker = true" />
-        <van-action-sheet v-model:show="showModePicker" title="加仓模式">
-          <van-cell title="单档加仓（固定线）" clickable @click="c.addPositionMode = 'single'; showModePicker = false; save()" />
-          <van-cell title="多档加仓（金字塔）" clickable @click="c.addPositionMode = 'multi'; showModePicker = false; save()" />
-          <van-cell title="取消" clickable class="text-center" style="color:var(--text-secondary)" @click="showModePicker = false" />
-        </van-action-sheet>
-        <van-field v-if="c.addPositionMode === 'single'" v-model.number="c.addPositionLine" label="加仓触发线 (%)" type="number" @change="save" />
-        <div v-if="c.addPositionMode === 'multi'" class="tier-grid p-3 grid grid-cols-2 gap-2">
-          <template v-for="(t, i) in c.addTiers" :key="i">
-            <van-field v-model.number="t.line" :label="`第${i+1}档(%)`" type="number" size="small" @change="save" />
-            <van-field v-model.number="t.ratio" :label="`买入(%)`" type="number" size="small" @change="save" />
-          </template>
-        </div>
-      </van-cell-group>
-
       <!-- 止损 -->
       <van-cell-group v-show="activeTab === 'stopLoss'" inset>
         <van-cell title="启用止损保护">
@@ -73,11 +56,9 @@ import { STYLE_PRESETS } from '../utils/constants'
 const store = inject('store')
 const collapsed = ref(true)
 const activeTab = ref('stopProfit')
-const showModePicker = ref(false)
 const showStylePicker = ref(false)
 const tabs = [
   { key: 'stopProfit', label: '🎯 止盈' },
-  { key: 'addPosition', label: '📉 加仓' },
   { key: 'stopLoss', label: '🛡 止损' },
   { key: 'advanced', label: '⚡ 高级' },
 ]
@@ -89,10 +70,9 @@ const c = reactive({ ...store.config })
 watch(store.config, (cfg) => Object.assign(c, cfg), { deep: true })
 
 const summary = computed(() => {
-  const mode = c.addPositionMode === 'multi' ? '多档加仓' : `加仓${c.addPositionLine}%`
   const trailing = c.useTrailingStop ? `回撤>${c.trailingStop}%止盈` : '固定止盈'
   const stopLoss = c.enableStopLoss ? `止损${c.stopLossLine}%` : '无止损'
-  return `止盈+${c.stopProfitLine}% | ${mode} | ${trailing} | ${stopLoss}`
+  return `止盈+${c.stopProfitLine}% | 止盈/止损/高级 | ${trailing} | ${stopLoss}`
 })
 
 function pickStyle(style) {
@@ -104,7 +84,7 @@ function pickStyle(style) {
 function applyPreset() {
   const p = STYLE_PRESETS[c.style]
   if (!p) return
-  c.stopProfitLine = p.stopProfit; c.addPositionLine = p.addLine; c.stopProfitRatio = p.stopRatio
+  c.stopProfitLine = p.stopProfit; c.stopProfitRatio = p.stopRatio
   c.trailingStop = p.trailing; c.extremeVolatility = p.extreme; c.stopLossLine = p.stopLoss
   c.stopLossRatio = p.stopLossRatio; c.freeDays = p.freeDays; c.maxPosition = p.maxPos
   save()
