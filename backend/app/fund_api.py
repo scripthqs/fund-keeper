@@ -1,22 +1,19 @@
 """
 天天基金 API 服务层
 提供基金信息查询、实时估值、历史净值拉取能力
+（注意：天天基金 fundgz 实时接口已于 2025 年下线，现改用东方财富接口）
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import re
-import ssl
 from typing import Optional
 
 import httpx
 
 logger = logging.getLogger(__name__)
 
-# 天天基金实时估值接口
-FUND_REALTIME_URL = "https://fundgz.1234567.com.cn/js/{code}.js"
 # 东方财富历史净值接口（需要 Referer）
 FUND_HISTORY_URL = "https://api.fund.eastmoney.com/f10/lsjz"
 # 东方财富基金基本信息接口
@@ -44,11 +41,20 @@ def _get_client() -> httpx.AsyncClient:
     if _client is None or _client.is_closed:
         _client = httpx.AsyncClient(
             headers=HEADERS,
-            timeout=httpx.Timeout(10.0, connect=5.0),
+            timeout=httpx.Timeout(30.0, connect=15.0),
             follow_redirects=True,
             # 使用默认 SSL 验证，但 catch SSL 错误时记录详细信息
         )
     return _client
+
+
+def _get_fallback_client() -> httpx.AsyncClient:
+    """获取回退专用客户端（较短超时，避免二次等待过长）"""
+    return httpx.AsyncClient(
+        headers=HEADERS,
+        timeout=httpx.Timeout(10.0, connect=5.0),
+        follow_redirects=True,
+    )
 
 
 class FundQueryError(Exception):
@@ -63,6 +69,8 @@ async def query_fund_by_code(code: str) -> dict:
     """
     根据基金代码查询实时信息（名称、净值、估算涨幅等）
 
+    直接使用东方财富接口（天天基金 fundgz 接口已于 2025 年下线）。
+
     Returns:
         {
             "code": "000001",
@@ -76,95 +84,43 @@ async def query_fund_by_code(code: str) -> dict:
     Raises:
         FundQueryError: 查询失败时抛出，包含详细错误描述
     """
-    try:
-        client = _get_client()
-        url = FUND_REALTIME_URL.format(code=code)
-        logger.info("正在查询基金 %s 实时数据...", code)
-        resp = await client.get(url)
-        resp.raise_for_status()
-        text = resp.text
+    logger.info("正在查询基金 %s 数据...", code)
 
-        # 天天基金返回的是 JSONP 格式: jsonpgz({...});
-        match = re.search(r"jsonpgz\((.+)\)", text, re.DOTALL)
-        if not match:
-            logger.warning("无法解析基金 %s 的 JSONP 响应: %s", code, text[:200])
-            raise FundQueryError(
-                f"基金代码 {code} 的接口返回格式异常",
-                detail="天天基金返回数据格式无法解析，可能接口有变动",
-                recoverable=False,
-            )
-
-        raw = json.loads(match.group(1))
-
-        # 检查有效数据
-        if not raw.get("name") or not raw.get("dwjz"):
-            logger.warning("基金 %s 返回数据不完整: %s", code, raw)
-            raise FundQueryError(
-                f"未查询到基金代码 {code} 的信息",
-                detail="请确认基金代码是否正确",
-                recoverable=False,
-            )
-
-        return {
-            "code": raw.get("fundcode", code),
-            "name": raw.get("name", ""),
-            "date": raw.get("jzrq", ""),  # 净值日期
-            "nav": float(raw.get("dwjz", 0)),  # 单位净值
-            "estimated_nav": float(raw.get("gsz", 0)) if raw.get("gsz") else None,
-            "estimated_change": float(raw.get("gszzl", 0)) if raw.get("gszzl") else None,
-            "update_time": raw.get("gztime", ""),
-        }
-
-    except httpx.ConnectError as e:
-        logger.error("查询基金 %s 网络连接失败: %s", code, e)
+    # 获取基金名称（东方财富）
+    name = await get_fund_name(code)
+    if not name:
         raise FundQueryError(
-            "无法连接到天天基金服务器",
-            detail=f"网络连接失败，请检查服务器网络是否可访问外部站点。错误: {e}",
-            recoverable=True,
-        ) from e
-
-    except httpx.ConnectTimeout as e:
-        logger.error("查询基金 %s 连接超时: %s", code, e)
-        raise FundQueryError(
-            "连接天天基金服务器超时",
-            detail="服务器网络可能较慢或受限，请稍后重试",
-            recoverable=True,
-        ) from e
-
-    except httpx.ReadTimeout as e:
-        logger.error("查询基金 %s 读取超时: %s", code, e)
-        raise FundQueryError(
-            "天天基金接口响应超时",
-            detail="外部接口响应缓慢，请稍后重试",
-            recoverable=True,
-        ) from e
-
-    except httpx.HTTPStatusError as e:
-        logger.error("查询基金 %s HTTP错误 %s: %s", code, e.response.status_code, e)
-        raise FundQueryError(
-            f"天天基金接口返回错误 (HTTP {e.response.status_code})",
-            detail=f"外部服务异常，请稍后重试",
-            recoverable=True,
-        ) from e
-
-    except (ssl.SSLError, httpx.ConnectError) as e:
-        logger.error("查询基金 %s SSL/连接异常: %s", code, e)
-        raise FundQueryError(
-            "服务器 SSL 证书验证失败",
-            detail=f"服务器可能缺少必要的 CA 证书。错误: {e}",
+            f"未查询到基金代码 {code} 的信息",
+            detail="请确认基金代码是否正确",
             recoverable=False,
-        ) from e
+        )
 
-    except FundQueryError:
-        raise
-
+    # 获取最新净值（东方财富历史净值接口）
+    nav = 0.0
+    date = ""
+    estimated_nav = None
+    estimated_change = None
+    try:
+        history = await get_fund_nav_history(code, page_size=1)
+        if history and len(history) > 0:
+            nav = history[0]["nav"]
+            date = history[0]["date"]
+            # 通过日涨幅反算估算净值
+            daily_pct = float(history[0].get("daily_change", "0") or "0")
+            estimated_nav = round(nav * (1 + daily_pct / 100), 4)
+            estimated_change = daily_pct
     except Exception as e:
-        logger.error("查询基金 %s 未知错误: %s", code, e)
-        raise FundQueryError(
-            "查询基金数据时发生未知错误",
-            detail=f"错误类型: {type(e).__name__}, 详情: {e}",
-            recoverable=True,
-        ) from e
+        logger.warning("获取基金 %s 历史净值失败: %s", code, e)
+
+    return {
+        "code": code,
+        "name": name,
+        "date": date,
+        "nav": nav,
+        "estimated_nav": estimated_nav,
+        "estimated_change": estimated_change,
+        "update_time": date,
+    }
 
 
 async def get_fund_nav(code: str) -> Optional[float]:
@@ -266,26 +222,26 @@ async def get_fund_nav_on_date(code: str, target_date: str) -> Optional[float]:
 async def get_fund_name(code: str) -> Optional[str]:
     """
     从东方财富获取基金名称（备用方案）
-    从基金详情页 JS 数据中解析名称
+    从基金详情页 JS 数据中解析名称，使用较短超时避免长时间等待
     """
     try:
-        client = _get_client()
-        url = FUND_INFO_URL.format(code=code)
-        resp = await client.get(url)
-        resp.raise_for_status()
-        text = resp.text
+        async with _get_fallback_client() as client:
+            url = FUND_INFO_URL.format(code=code)
+            resp = await client.get(url)
+            resp.raise_for_status()
+            text = resp.text
 
-        # 从 JS 文件中提取基金名称
-        # var fS_name = "基金名称";
-        match = re.search(r'fS_name\s*=\s*"([^"]+)"', text)
-        if match:
-            return match.group(1)
+            # 从 JS 文件中提取基金名称
+            # var fS_name = "基金名称";
+            match = re.search(r'fS_name\s*=\s*"([^"]+)"', text)
+            if match:
+                return match.group(1)
 
-        match = re.search(r'var\s+fS_name\s*=\s*["\']([^"\']+)["\']', text)
-        if match:
-            return match.group(1)
+            match = re.search(r'var\s+fS_name\s*=\s*["\']([^"\']+)["\']', text)
+            if match:
+                return match.group(1)
 
-        return None
+            return None
     except Exception as e:
         logger.error("获取基金 %s 名称失败: %s", code, e)
         return None

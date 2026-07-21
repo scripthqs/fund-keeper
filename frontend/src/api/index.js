@@ -34,7 +34,7 @@ http.interceptors.response.use(
 
     // 网络层错误（无 response，说明请求根本没到达后端）
     if (error.code === 'ECONNABORTED') {
-      return Promise.reject(new Error('请求超时，请检查网络连接'))
+      return Promise.reject(new Error('请求超时（30秒），天天基金接口响应缓慢，请稍后重试'))
     }
     if (!error.response) {
       return Promise.reject(new Error('网络连接失败，请检查服务是否正常运行'))
