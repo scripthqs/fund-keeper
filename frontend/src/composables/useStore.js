@@ -260,6 +260,35 @@ async function sendChatMessage(message, fundContext) {
   return r.reply
 }
 
+/**
+ * 流式发送聊天消息，返回一个可 await 的 promise（完成后 resolve fullReply）
+ * 在回调 onChunk 中实时更新聊天消息列表
+ */
+async function sendChatMessageStream(message, fundContext, onChunk) {
+  const recent = chatMessages.value.slice(-20)
+  // 先推入用户消息和空的 assistant 占位
+  chatMessages.value.push({ role: 'user', content: message })
+  const aiIdx = chatMessages.value.length
+  chatMessages.value.push({ role: 'assistant', content: '' })
+
+  let fullReply = ''
+  try {
+    for await (const event of api.chatStream(message, fundContext, recent)) {
+      if (event.done) break
+      if (event.content) {
+        fullReply += event.content
+        // 原地更新占位消息（Vue 响应式自动追踪）
+        chatMessages.value[aiIdx].content = fullReply
+        if (onChunk) onChunk(event.content, fullReply)
+      }
+    }
+  } catch (e) {
+    chatMessages.value[aiIdx].content = 'AI 回复失败: ' + (e.message || '网络错误')
+    throw e
+  }
+  return fullReply
+}
+
 async function clearChat() { await api.clearChatMessages(); chatMessages.value = [] }
 
 function saveSnapshot(fid, sc, rn, tc, tr) {
@@ -312,7 +341,7 @@ export function useStore() {
     totalPrincipal, totalMarketValue, totalBuy, totalSell, totalReturnRate,
     loadAll, loadForTab, refreshForTab, refreshFunds, createFund, updateFund, removeFund,     executeAction, undoAction,
     saveConfig, updatePeakReturn, clearHistory, evaluateHistory,
-    sendChatMessage, clearChat, saveSnapshot, buildFundContext,
+    sendChatMessage, sendChatMessageStream, clearChat, saveSnapshot, buildFundContext,
     queryFund, autoUpdateNav,
   }
 }

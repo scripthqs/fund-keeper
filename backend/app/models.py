@@ -248,3 +248,33 @@ class TierRecommendResponse(BaseModel):
     macro_analysis: Optional[MacroAnalysisResult] = Field(None, alias="macroAnalysis")  # 宏观分析结果
     explanation: str = ""
 
+
+# ==================== AI 整体组合分析 ====================
+
+class OverallAnalysisRequest(BaseModel):
+    """AI 整体组合分析请求 - 传入格式化的全部持仓文本"""
+    portfolio_text: str = Field("", alias="portfolioText")
+
+
+class OverallAnalysisResponse(BaseModel):
+    """AI 整体组合分析响应"""
+    analysis: str
+
+
+# ==================== 用户认证 ====================
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class AuthResponse(BaseModel):
+    ok: bool
+    message: str = ""
+    username: str = ""
+

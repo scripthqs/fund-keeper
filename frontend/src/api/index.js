@@ -13,6 +13,17 @@ const http = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
+// 请求拦截器：自动附加当前用户名
+http.interceptors.request.use((config) => {
+  try {
+    const stored = JSON.parse(localStorage.getItem('fund_keeper_user') || '{}')
+    if (stored.username) {
+      config.headers['X-Username'] = stored.username
+    }
+  } catch { /* ignore */ }
+  return config
+})
+
 // 响应拦截器：统一提取 data + 错误处理
 http.interceptors.response.use(
   (response) => response.data,
@@ -44,9 +55,80 @@ http.interceptors.response.use(
   }
 )
 
+// ==================== SSE 流式请求 ====================
+
+/**
+ * 发起 SSE 流式 POST 请求，返回 async generator
+ * @param {string} url - API 路径（如 '/chat/stream'）
+ * @param {object} data - POST body 对象
+ * @yields {object} SSE 事件解析后的对象
+ */
+async function* fetchSSE(url, data) {
+  const headers = { 'Content-Type': 'application/json' }
+  // 注入当前用户名
+  try {
+    const stored = JSON.parse(localStorage.getItem('fund_keeper_user') || '{}')
+    if (stored.username) {
+      headers['X-Username'] = stored.username
+    }
+  } catch { /* ignore */ }
+  const response = await fetch('/api' + url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(data),
+  })
+
+  console.log('[SSE] HTTP 状态:', response.status)
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ detail: '请求失败' }))
+    throw new Error(err.detail || `HTTP ${response.status}`)
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let firstChunk = true
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) {
+      console.log('[SSE] 流结束 (reader done)')
+      break
+    }
+
+    if (firstChunk) {
+      console.log('[SSE] 收到首个网络数据块')
+      firstChunk = false
+    }
+
+    buffer += decoder.decode(value, { stream: true })
+
+    // 解析 SSE 事件（data: {...}\n\n）
+    const lines = buffer.split('\n')
+    // 最后一行可能不完整，保留在 buffer 中
+    buffer = lines.pop() || ''
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const jsonStr = line.slice(6)
+        try {
+          yield JSON.parse(jsonStr)
+        } catch {
+          // 跳过无法解析的行
+        }
+      }
+    }
+  }
+}
+
 // ==================== API 接口 ====================
 
 export const api = {
+  // 认证
+  auth: (url, data) => http.post(url, data),
+  changePassword: (data) => http.post('/auth/change-password', data),
+
   // 健康
   health: () => http.get('/health'),
 
@@ -79,11 +161,17 @@ export const api = {
   // AI 推荐加仓档位
   aiRecommendTiers: (data) => http.post('/funds/ai-recommend-tiers', data),
 
+  // AI 整体组合分析
+  overallAnalysis: (data) => http.post('/funds/overall-analysis', data),
+  overallAnalysisStream: (data) => fetchSSE('/funds/overall-analysis/stream', data),
+
   // 聊天
   getChatMessages: () => http.get('/chat/messages'),
   clearChatMessages: () => http.delete('/chat/messages'),
   chat: (message, fundContext, history) =>
     http.post('/chat', { message, fundContext, history }),
+  chatStream: (message, fundContext, history) =>
+    fetchSSE('/chat/stream', { message, fundContext, history }),
 
   // 情绪
   generateEmotion: (data) => http.post('/emotion', data),
@@ -94,5 +182,10 @@ export const api = {
   // 快照
   getSnapshots: (fundId) => http.get('/snapshots/' + fundId),
   saveSnapshot: (data) => http.post('/snapshots', data),
+
+  // 管理员 - 账号管理
+  getAccounts: () => http.get('/admin/accounts'),
+  deleteAccount: (userId) => http.delete('/admin/accounts/' + userId),
+  addAccount: (data) => http.post('/admin/accounts', data),
 
 }

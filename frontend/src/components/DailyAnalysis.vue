@@ -208,16 +208,19 @@
         <span v-if="updateResult.failedCount > 0" class="ml-2" style="color:#ff9800">⚠️ {{ updateResult.failedCount }} 只失败</span>
         <span v-if="updateResult.updatedCount === 0 && updateResult.failedCount === 0 && updateResult.skippedCount > 0" style="color:var(--text-secondary)">无基金代码，请先编辑基金添加代码</span>
       </div>
+
+
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, inject, watch } from 'vue'
+import { ref, reactive, inject, watch, onBeforeUnmount } from 'vue'
 import { fmtNum, fmtSigned, daysBetween } from '../utils/helpers'
 import { showTip, askConfirm, showError } from '../utils/dialog'
 import { analyzeFundEnhanced, evaluateWarning, calcSafetyCushion, calcRecoveryNeeded } from '../utils/engine'
 import { B, round, toNum } from '../utils/bigMath'
+import { api } from '../api'
 
 const emit = defineEmits(['addFund'])
 
@@ -359,11 +362,65 @@ async function del(id) {
 // ---- 一键更新净值（预览模式） ----
 const updatingNav = ref(false)
 const updateResult = ref(null)
+const overallAnalyzing = ref(false)
+const overallAnalysisResult = ref('')
+const overallAnalysisTime = ref('')
+const streamConnected = ref(false)
+const reasoningPhase = ref(false)
+
+// ===== 打字机动画（逐字输出） =====
+let typewriterTimer = null
+let typewriterBuffer = ''
+
+function startTypewriter() {
+  stopTypewriter()
+  typewriterTimer = setInterval(() => {
+    if (typewriterBuffer.length === 0) return
+    // 一次取一个字（中文一个字，英文一个字母）
+    const char = typewriterBuffer[0]
+    typewriterBuffer = typewriterBuffer.slice(1)
+    overallAnalysisResult.value += char
+  }, 30)
+}
+
+function stopTypewriter() {
+  if (typewriterTimer) {
+    clearInterval(typewriterTimer)
+    typewriterTimer = null
+  }
+  typewriterBuffer = ''
+}
+
+function resetStreamState() {
+  stopTypewriter()
+  streamConnected.value = false
+  reasoningPhase.value = false
+}
+
+function waitForTypewriterDrain(timeoutMs = 30000) {
+  return new Promise((resolve) => {
+    const start = Date.now()
+    const check = () => {
+      if (typewriterBuffer.length === 0) {
+        resolve()
+      } else if (Date.now() - start > timeoutMs) {
+        resolve()  // 超时也结束，避免永久卡住
+      } else {
+        setTimeout(check, 60)
+      }
+    }
+    check()
+  })
+}
+
+onBeforeUnmount(() => {
+  stopTypewriter()
+})
 
 async function autoUpdate() {
   const hasCode = funds.value.some(f => f.fundCode)
   if (!hasCode) {
-    showError('没有基金填写了代码，请先编辑基金添加天天基金代码')
+    showError('没有基金填写了代码，请先编辑基金添加基金代码')
     return
   }
   updatingNav.value = true
@@ -391,11 +448,134 @@ async function autoUpdate() {
         }
       }
     }
+    // 自动触发 AI 整体组合分析
+    if (r.results && r.results.some(res => res.success && res.newMarketValue !== res.oldMarketValue)) {
+      runOverallAnalysis()
+    }
   } catch (e) {
     showError('更新失败: ' + (e.message || '网络错误'))
   } finally {
     updatingNav.value = false
   }
+}
+
+function buildPortfolioText() {
+  const list = funds.value
+  if (!list.length) return ''
+  const lines = []
+  const now = new Date()
+  const timeStr = now.toLocaleString('zh-CN', { hour12: false })
+  lines.push('=== 全部基金持仓总览 ===')
+  lines.push('')
+  lines.push(`基金数量：${list.length} 只`)
+  lines.push(`数据时间：${timeStr}`)
+  lines.push(`总本金：¥${fmtNum(list.reduce((s, f) => s + (f.initialPrincipal || 0), 0))}`)
+  lines.push(`总市值：¥${fmtNum(list.reduce((s, f) => s + (f.currentMarketValue || 0), 0))}`)
+  lines.push('')
+  
+  list.forEach((f, i) => {
+    const s = fundStates[f.id] || {}
+    const preview = s.previewData || null
+    const holdDays = daysBetween(f.buyDate, now)
+    // 优先用预览后的市值和收益率，否则用基金当前数据
+    const marketVal = preview ? preview.newMarketValue : (f.currentMarketValue || 0)
+    const totalReturn = preview ? preview.calculatedReturnRate : (s.totalReturn != null ? s.totalReturn : (f.currentReturnRate || 0))
+    const todayChange = s.todayChange != null ? s.todayChange : null
+    const todayProfit = s.todayProfit != null ? s.todayProfit : null
+    
+    lines.push(`--- 基金 [${i + 1}] ---`)
+    lines.push(`名称：${f.name || '未命名'}`)
+    if (f.fundCode) lines.push(`代码：${f.fundCode}`)
+    if (f.buyDate) lines.push(`买入日期：${f.buyDate}`)
+    lines.push(`持有天数：${holdDays || 0} 天`)
+    lines.push(`初始本金：¥${fmtNum(f.initialPrincipal || 0)}`)
+    lines.push(`累计买入：¥${fmtNum(f.totalBuyAmount || 0)}`)
+    if (f.totalSellAmount) lines.push(`累计卖出：¥${fmtNum(f.totalSellAmount)}`)
+    lines.push(`当前市值：¥${fmtNum(marketVal)}`)
+    lines.push(`当前收益率：${fmtSigned(totalReturn)}%`)
+    if (f.maxInvestment > 0) lines.push(`投入上限：¥${fmtNum(f.maxInvestment)}`)
+    if (preview) {
+      if (todayChange != null) lines.push(`今日涨跌：${fmtSigned(todayChange)}%`)
+      if (todayProfit != null) lines.push(`今日收益：${fmtSigned(todayProfit)} 元`)
+      lines.push('（以上数据为更新后的最新净值）')
+    } else {
+      if (todayChange != null) lines.push(`今日涨跌：${fmtSigned(todayChange)}%`)
+      if (todayProfit != null) lines.push(`今日收益：${fmtSigned(todayProfit)} 元`)
+    }
+    if (f.stopProfitLine) lines.push(`止盈线：+${f.stopProfitLine}%，止盈比例：${f.stopProfitRatio || '?'}%`)
+    if (f.stopLossLine) lines.push(`止损线：-${f.stopLossLine}%，止损比例：${f.stopLossRatio || '?'}%`)
+    if (f.strategyType === 'pullback' && f.pullbackTiers?.length) lines.push(`策略类型：上涨回调加仓`)
+    if (f.addTiers && f.addTiers.length) {
+      const nextTier = f.addTiers.find(t => !t.executed)
+      if (nextTier) lines.push(`下一加仓位：${nextTier.line}%（加仓比例 ${nextTier.ratio}%）`)
+    }
+    if (f.fundShares > 0) lines.push(`持有份额：${f.fundShares}`)
+    lines.push('')
+  })
+  return lines.join('\n')
+}
+
+async function runOverallAnalysis() {
+  const portfolioText = buildPortfolioText()
+  if (!portfolioText) return
+  overallAnalyzing.value = true
+  overallAnalysisResult.value = ''
+  overallAnalysisTime.value = ''
+  resetStreamState()
+  startTypewriter()
+  let fullText = ''
+  try {
+    for await (const event of api.overallAnalysisStream({ portfolioText })) {
+      console.log('[SSE] 收到事件:', JSON.stringify(event).slice(0, 120))
+
+      // 连接建立
+      if (event.connected) {
+        streamConnected.value = true
+        continue
+      }
+
+      // 推理模型思考阶段开始
+      if (event.reasoning) {
+        reasoningPhase.value = true
+        continue
+      }
+
+      // 后端错误（必须在 done 之前判断）
+      if (event.error) {
+        console.error('[SSE] 后端错误:', event.error)
+        throw new Error(event.error)
+      }
+
+      // 流结束
+      if (event.done) {
+        console.log('[SSE] 流结束')
+        break
+      }
+
+      // 内容块 → 入打字机缓冲
+      if (event.content) {
+        reasoningPhase.value = false  // 思考结束，开始正式回答
+        fullText += event.content
+        typewriterBuffer += event.content
+      }
+    }
+    // 等待打字机把缓冲吐完
+    await waitForTypewriterDrain()
+    if (fullText) {
+      overallAnalysisTime.value = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+    }
+  } catch (e) {
+    console.error('[SSE] 异常:', e.message || e)
+    resetStreamState()
+    overallAnalysisResult.value = 'AI 分析暂时不可用：' + (e.message || '服务繁忙，请稍后重试')
+  } finally {
+    resetStreamState()
+    overallAnalyzing.value = false
+  }
+}
+
+function refreshOverallAnalysis() {
+  runOverallAnalysis()
 }
 
 function dismissPreview(fundId) {
@@ -601,6 +781,17 @@ function analyze(fund) {
   analysisData.value = { fund, result, warning, safetyCushion, recoveryNeeded, todayChange: effectiveChange, totalReturn: s.totalReturn }
   showAdvice.value = true
 }
+
+// 暴露给父组件用于渲染整体分析卡片
+defineExpose({
+  overallAnalyzing,
+  overallAnalysisResult,
+  overallAnalysisTime,
+  streamConnected,
+  reasoningPhase,
+  runOverallAnalysis,
+  refreshOverallAnalysis,
+})
 </script>
 
 <style scoped>

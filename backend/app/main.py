@@ -2,14 +2,14 @@
 
 import logging
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings, FRONTEND_DIR
-from app.database import init_db
-from app.routers import funds, config, history, chat, snapshots, calendar
+from app.database import init_db, get_current_user_id
+from app.routers import funds, config, history, chat, snapshots, calendar, auth, admin
 
 # 日志配置
 logging.basicConfig(
@@ -44,6 +44,13 @@ app.include_router(history.router)
 app.include_router(chat.router)
 app.include_router(snapshots.router)
 app.include_router(calendar.router)
+app.include_router(auth.router)
+app.include_router(admin.router)
+
+
+def get_current_user(x_username: str = Header(None, alias="X-Username")):
+    """从请求头获取当前用户，返回 user_id"""
+    return get_current_user_id(x_username)
 
 
 @app.get("/api/health")

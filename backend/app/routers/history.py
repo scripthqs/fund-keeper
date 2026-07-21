@@ -3,42 +3,47 @@
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Header
 
-from app.database import get_db, gen_id, now_str, today_str
+from app.database import get_db, gen_id, now_str, today_str, get_current_user_id
 from app.models import HistoryCreate, HistoryOut, HistoryEvaluateResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/history", tags=["操作历史"])
 
 
+async def _uid(x_username: str = Header(None, alias="X-Username")):
+    return get_current_user_id(x_username)
+
+
 @router.get("", response_model=List[HistoryOut])
-async def list_history(fund_name: Optional[str] = None):
+async def list_history(fund_name: Optional[str] = None, user_id: str = Depends(_uid)):
     """获取操作历史（可按基金名筛选）"""
     conn = get_db()
     if fund_name:
         rows = conn.execute(
-            "SELECT * FROM history WHERE fund_name = ? ORDER BY created_at DESC",
-            (fund_name,),
+            "SELECT * FROM history WHERE fund_name = ? AND user_id = ? ORDER BY created_at DESC",
+            (fund_name, user_id),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT * FROM history ORDER BY created_at DESC"
+            "SELECT * FROM history WHERE user_id = ? ORDER BY created_at DESC",
+            (user_id,),
         ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
 @router.post("", response_model=HistoryOut)
-async def create_history(item: HistoryCreate):
+async def create_history(item: HistoryCreate, user_id: str = Depends(_uid)):
     """添加操作记录"""
     conn = get_db()
     hid = gen_id()
     data = item.model_dump(by_alias=True)
     conn.execute(
         """INSERT INTO history
-           (id, date, fund_name, type, amount, return_rate, note, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+           (id, date, fund_name, type, amount, return_rate, note, created_at, user_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             hid,
             data.get("date") or today_str(),
@@ -48,6 +53,7 @@ async def create_history(item: HistoryCreate):
             data["returnRate"],
             data["note"],
             now_str(),
+            user_id,
         ),
     )
     conn.commit()
@@ -57,22 +63,22 @@ async def create_history(item: HistoryCreate):
 
 
 @router.delete("")
-async def clear_history():
-    """清空所有操作历史"""
+async def clear_history(user_id: str = Depends(_uid)):
+    """清空当前用户的所有操作历史"""
     conn = get_db()
-    conn.execute("DELETE FROM history")
+    conn.execute("DELETE FROM history WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
     return {"ok": True}
 
 
 @router.post("/evaluate/{history_id}", response_model=HistoryEvaluateResponse)
-async def evaluate_history(history_id: str):
+async def evaluate_history(history_id: str, user_id: str = Depends(_uid)):
     """对指定操作历史记录进行 AI 评价，结果保存到数据库"""
     conn = get_db()
     try:
         row = conn.execute(
-            "SELECT * FROM history WHERE id = ?", (history_id,)
+            "SELECT * FROM history WHERE id = ? AND user_id = ?", (history_id, user_id)
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="操作记录不存在")

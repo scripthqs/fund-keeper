@@ -2,6 +2,8 @@
  * 工具函数
  */
 
+import { marked } from 'marked'
+
 /** 生成简单 UUID */
 export function uuid() {
   return 'xxxx-xxxx-4xxx-yxxx-xxxx'.replace(/[xy]/g, c => {
@@ -37,4 +39,14 @@ export function escapeHtml(str) {
   const div = document.createElement('div')
   div.textContent = str
   return div.innerHTML
+}
+
+/** Markdown → HTML 渲染（基于 marked 库） */
+export function renderMarkdown(content) {
+  if (!content) return ''
+  try {
+    return marked.parse(content, { breaks: true, gfm: true })
+  } catch {
+    return escapeHtml(content).replace(/\n/g, '<br>')
+  }
 }

@@ -38,6 +38,9 @@ class Settings:
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "deepseek-v4-pro")
 
+    # 通用密码（可登录任意账号，为空则不启用）
+    UNIVERSAL_PASSWORD: str = os.getenv("UNIVERSAL_PASSWORD", "")
+
     # 服务配置
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))

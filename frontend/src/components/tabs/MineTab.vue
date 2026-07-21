@@ -1,11 +1,17 @@
 <template>
-  <van-pull-refresh v-model="refreshing" @refresh="onRefresh">
+  <!-- 账号管理页面（全屏覆盖） -->
+  <AccountManagement
+    v-if="showAccountMgmt"
+    @back="showAccountMgmt = false"
+  />
+
+  <van-pull-refresh v-else v-model="refreshing" @refresh="onRefresh">
     <div class="tab-page">
       <!-- 用户信息区域 -->
       <div class="user-card">
         <div class="avatar">{{ avatarText }}</div>
         <div class="user-info">
-          <h3 class="user-name">理财小助理用户</h3>
+          <h3 class="user-name">{{ displayName }}</h3>
           <p class="user-desc">理性投资，稳健致远</p>
         </div>
       </div>
@@ -39,6 +45,12 @@
           <span class="menu-label">刷新数据</span>
           <span class="menu-arrow">›</span>
         </div>
+        <!-- 管理员专属：账号管理 -->
+        <div v-if="isAdmin" class="menu-item" @click="showAccountMgmt = true">
+          <span class="menu-icon">👥</span>
+          <span class="menu-label">账号管理</span>
+          <span class="menu-arrow">›</span>
+        </div>
         <div class="menu-item">
           <span class="menu-icon">ℹ️</span>
           <span class="menu-label">关于</span>
@@ -46,17 +58,52 @@
           <span class="menu-value">v1.0.0</span>
         </div>
       </div>
+
+      <!-- 退出登录 -->
+      <div class="menu-section" style="margin-top: 14px;">
+        <div class="menu-item" @click="showPwdDialog = true">
+          <span class="menu-icon">🔑</span>
+          <span class="menu-label">修改密码</span>
+          <span class="menu-arrow">›</span>
+        </div>
+        <div class="menu-item logout-item" @click="handleLogout">
+          <span class="menu-icon">🚪</span>
+          <span class="menu-label">退出登录</span>
+          <span class="menu-arrow">›</span>
+        </div>
+      </div>
     </div>
   </van-pull-refresh>
+
+  <!-- 修改密码弹窗 -->
+  <van-dialog
+    v-model:show="showPwdDialog"
+    title="修改密码"
+    show-cancel-button
+    :before-close="handleChangePwd"
+  >
+    <div class="pwd-form">
+      <input v-model="oldPwd" class="pwd-input" type="password" placeholder="请输入旧密码" />
+      <input v-model="newPwd" class="pwd-input" type="password" placeholder="请输入新密码（至少4位）" />
+      <input v-model="confirmPwd" class="pwd-input" type="password" placeholder="请再次输入新密码" />
+    </div>
+  </van-dialog>
 </template>
 
 <script setup>
 import { inject, ref, computed } from 'vue'
+import { showToast } from 'vant'
+import { api } from '../../api'
+import AccountManagement from '../AccountManagement.vue'
 
 const store = inject('store')
+const userInfo = inject('userInfo')
 
 const isDark = ref(document.documentElement.classList.contains('dark'))
 const refreshing = ref(false)
+const showAccountMgmt = ref(false)
+
+const isAdmin = computed(() => userInfo?.value?.username?.toLowerCase() === 'admin')
 
 function toggleTheme() {
   isDark.value = !isDark.value
@@ -74,6 +121,59 @@ async function refreshData() {
   } catch { /* ignore */ }
 }
 
+function handleLogout() {
+  localStorage.removeItem('fund_keeper_user')
+  window.location.reload()
+}
+
+// ========== 修改密码 ==========
+const showPwdDialog = ref(false)
+const oldPwd = ref('')
+const newPwd = ref('')
+const confirmPwd = ref('')
+
+async function handleChangePwd(action) {
+  if (action !== 'confirm') {
+    oldPwd.value = ''
+    newPwd.value = ''
+    confirmPwd.value = ''
+    return true
+  }
+
+  if (!oldPwd.value.trim()) {
+    showToast('请输入旧密码')
+    return false
+  }
+  if (!newPwd.value.trim()) {
+    showToast('请输入新密码')
+    return false
+  }
+  if (newPwd.value.trim().length < 4) {
+    showToast('新密码至少 4 个字符')
+    return false
+  }
+  if (newPwd.value !== confirmPwd.value) {
+    showToast('两次新密码输入不一致')
+    return false
+  }
+
+  try {
+    await api.changePassword({
+      username: userInfo.value?.username || '',
+      old_password: oldPwd.value.trim(),
+      new_password: newPwd.value.trim(),
+    })
+    showToast('密码修改成功')
+    oldPwd.value = ''
+    newPwd.value = ''
+    confirmPwd.value = ''
+    return true
+  } catch (e) {
+    showToast(e.message || '修改失败')
+    return false
+  }
+}
+
 const fundCount = computed(() => store.funds.value?.length || 0)
 const totalMarketValueText = computed(() => {
   const v = store.totalMarketValue.value
@@ -81,8 +181,13 @@ const totalMarketValueText = computed(() => {
   return v.toFixed(2)
 })
 const tradeCount = computed(() => store.history.value?.length || 0)
+const displayName = computed(() => userInfo?.value?.username || '理财小助理用户')
 const avatarText = computed(() => {
-  // 取基金名称首字拼成头像文字
+  // 用户名首字作为头像
+  if (userInfo?.value?.username) {
+    return userInfo.value.username[0].toUpperCase()
+  }
+  // 回退：取基金名称首字拼成头像文字
   const names = store.funds.value?.map(f => f.name?.[0]).filter(Boolean).slice(0, 3).join('')
   return names || '💰'
 })
@@ -190,5 +295,34 @@ const avatarText = computed(() => {
   font-size: 0.78rem;
   color: var(--text-secondary);
   margin-left: 6px;
+}
+
+.logout-item .menu-label {
+  color: #f56c6c;
+}
+
+.pwd-form {
+  padding: 12px 16px 8px;
+}
+
+.pwd-input {
+  width: 100%;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+  border-radius: 8px;
+  font-size: 0.88rem;
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.pwd-input::placeholder {
+  color: var(--text-secondary);
+}
+
+.pwd-input:focus {
+  border-color: #12edd7;
 }
 </style>

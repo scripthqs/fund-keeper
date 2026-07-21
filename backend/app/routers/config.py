@@ -2,51 +2,56 @@
 
 import json
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, Header
 
-from app.database import get_db, DEFAULT_CONFIG
+from app.database import get_db, DEFAULT_CONFIG, gen_id, get_current_user_id
 from app.models import ConfigUpdate
 
 router = APIRouter(prefix="/api/config", tags=["投资配置"])
 
 
-@router.get("")
-async def get_config():
-    """获取投资配置"""
-    conn = get_db()
+async def _uid(x_username: str = Header(None, alias="X-Username")):
+    return get_current_user_id(x_username)
+
+
+def _ensure_config(conn, user_id: str) -> dict:
+    """确保用户配置存在，不存在则创建默认配置"""
     row = conn.execute(
-        "SELECT data FROM config WHERE id = 'default'"
+        "SELECT id, data FROM config WHERE user_id = ?", (user_id,)
     ).fetchone()
-    conn.close()
-
     if row:
-        config = json.loads(row["data"])
-    else:
-        config = DEFAULT_CONFIG.copy()
+        return json.loads(row["data"])
+    # 创建默认配置
+    cid = gen_id()
+    data = json.dumps(DEFAULT_CONFIG, ensure_ascii=False)
+    conn.execute(
+        "INSERT INTO config (id, user_id, data) VALUES (?, ?, ?)", (cid, user_id, data)
+    )
+    conn.commit()
+    return DEFAULT_CONFIG.copy()
 
+
+@router.get("")
+async def get_config(user_id: str = Depends(_uid)):
+    """获取当前用户的投资配置"""
+    conn = get_db()
+    config = _ensure_config(conn, user_id)
+    conn.close()
     return config
 
 
 @router.put("")
-async def update_config(config: ConfigUpdate):
-    """更新投资配置"""
+async def update_config(config: ConfigUpdate, user_id: str = Depends(_uid)):
+    """更新当前用户的投资配置"""
     data = config.model_dump(by_alias=True, exclude_none=True)
 
-    # 合并到现有配置（保留 peakReturnRate 等字段）
     conn = get_db()
-    row = conn.execute(
-        "SELECT data FROM config WHERE id = 'default'"
-    ).fetchone()
-
-    if row:
-        existing = json.loads(row["data"])
-    else:
-        existing = DEFAULT_CONFIG.copy()
-
+    existing = _ensure_config(conn, user_id)
     existing.update(data)
+
     conn.execute(
-        "UPDATE config SET data = ? WHERE id = 'default'",
-        (json.dumps(existing, ensure_ascii=False),),
+        "UPDATE config SET data = ? WHERE user_id = ?",
+        (json.dumps(existing, ensure_ascii=False), user_id),
     )
     conn.commit()
     conn.close()
@@ -55,25 +60,18 @@ async def update_config(config: ConfigUpdate):
 
 
 @router.put("/peak-return")
-async def update_peak_return(fund_id: str, peak_rate: float):
+async def update_peak_return(fund_id: str, peak_rate: float, user_id: str = Depends(_uid)):
     """更新某基金的最高收益率快照（用于移动止盈）"""
     conn = get_db()
-    row = conn.execute(
-        "SELECT data FROM config WHERE id = 'default'"
-    ).fetchone()
-
-    if row:
-        config = json.loads(row["data"])
-    else:
-        config = DEFAULT_CONFIG.copy()
+    config = _ensure_config(conn, user_id)
 
     if "peakReturnRate" not in config:
         config["peakReturnRate"] = {}
     config["peakReturnRate"][fund_id] = peak_rate
 
     conn.execute(
-        "UPDATE config SET data = ? WHERE id = 'default'",
-        (json.dumps(config, ensure_ascii=False),),
+        "UPDATE config SET data = ? WHERE user_id = ?",
+        (json.dumps(config, ensure_ascii=False), user_id),
     )
     conn.commit()
     conn.close()

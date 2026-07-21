@@ -1,13 +1,16 @@
 """AI 聊天与情绪文案路由"""
 
+import asyncio
+import json
 import logging
 from typing import List
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi.responses import StreamingResponse
 
-from app.agent import chat_with_advisor, generate_emotion, interpret_advice
+from app.agent import chat_with_advisor, chat_with_advisor_stream, generate_emotion, interpret_advice
 from app.config import settings
-from app.database import get_db, gen_id, now_str
+from app.database import get_db, gen_id, now_str, get_current_user_id
 from app.models import (
     AdviceInterpretRequest,
     AdviceInterpretResponse,
@@ -22,24 +25,29 @@ router = APIRouter(prefix="/api", tags=["AI 对话"])
 logger = logging.getLogger(__name__)
 
 
+async def _uid(x_username: str = Header(None, alias="X-Username")):
+    return get_current_user_id(x_username)
+
+
 # ==================== 聊天消息管理 ====================
 
 @router.get("/chat/messages", response_model=List[ChatMessage])
-async def list_chat_messages():
-    """获取所有聊天记录"""
+async def list_chat_messages(user_id: str = Depends(_uid)):
+    """获取当前用户的所有聊天记录"""
     conn = get_db()
     rows = conn.execute(
-        "SELECT role, content FROM chat_messages ORDER BY created_at"
+        "SELECT role, content FROM chat_messages WHERE user_id = ? ORDER BY created_at",
+        (user_id,),
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
 @router.delete("/chat/messages")
-async def clear_chat_messages():
-    """清空所有聊天记录"""
+async def clear_chat_messages(user_id: str = Depends(_uid)):
+    """清空当前用户的所有聊天记录"""
     conn = get_db()
-    conn.execute("DELETE FROM chat_messages")
+    conn.execute("DELETE FROM chat_messages WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
     return {"ok": True}
@@ -48,7 +56,7 @@ async def clear_chat_messages():
 # ==================== AI 对话 ====================
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, user_id: str = Depends(_uid)):
     """与 AI 投资顾问对话"""
     if not settings.llm_configured:
         raise HTTPException(
@@ -58,10 +66,10 @@ async def chat(req: ChatRequest):
 
     # 保存用户消息
     conn = get_db()
-    user_id = gen_id()
+    msg_id = gen_id()
     conn.execute(
-        "INSERT INTO chat_messages (id, role, content, created_at) VALUES (?, ?, ?, ?)",
-        (user_id, "user", req.message, now_str()),
+        "INSERT INTO chat_messages (id, role, content, created_at, user_id) VALUES (?, ?, ?, ?, ?)",
+        (msg_id, "user", req.message, now_str(), user_id),
     )
     conn.commit()
     conn.close()
@@ -81,13 +89,93 @@ async def chat(req: ChatRequest):
     conn = get_db()
     ai_id = gen_id()
     conn.execute(
-        "INSERT INTO chat_messages (id, role, content, created_at) VALUES (?, ?, ?, ?)",
-        (ai_id, "assistant", reply, now_str()),
+        "INSERT INTO chat_messages (id, role, content, created_at, user_id) VALUES (?, ?, ?, ?, ?)",
+        (ai_id, "assistant", reply, now_str(), user_id),
     )
     conn.commit()
     conn.close()
 
     return ChatResponse(reply=reply)
+
+
+@router.post("/chat/stream")
+async def chat_stream(req: ChatRequest, user_id: str = Depends(_uid)):
+    """与 AI 投资顾问对话（流式 SSE）"""
+    if not settings.llm_configured:
+        raise HTTPException(status_code=503, detail="服务端未配置 LLM API Key")
+
+    # 保存用户消息
+    conn = get_db()
+    msg_id = gen_id()
+    conn.execute(
+        "INSERT INTO chat_messages (id, role, content, created_at, user_id) VALUES (?, ?, ?, ?, ?)",
+        (msg_id, "user", req.message, now_str(), user_id),
+    )
+    conn.commit()
+    conn.close()
+
+    history_dicts = [{"role": m.role, "content": m.content} for m in req.history]
+
+    async def event_stream():
+        import threading
+        from queue import Queue as TQueue
+
+        full_reply = ""
+        chunk_queue = TQueue()
+        error_holder = []
+
+        def _run():
+            try:
+                for chunk in chat_with_advisor_stream(
+                    user_message=req.message,
+                    fund_context=req.fund_context,
+                    history=history_dicts,
+                ):
+                    chunk_queue.put(chunk)
+            except Exception as e:
+                error_holder.append(e)
+            finally:
+                chunk_queue.put(None)  # 结束标志
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+
+        loop = asyncio.get_running_loop()
+        while True:
+            chunk = await loop.run_in_executor(None, chunk_queue.get)
+            if chunk is None:
+                break
+            full_reply += chunk
+            yield f"data: {json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
+
+        thread.join(timeout=5)
+
+        if error_holder:
+            logger.error("流式对话失败: %s", error_holder[0])
+            yield f"data: {json.dumps({'error': str(error_holder[0]), 'done': True}, ensure_ascii=False)}\n\n"
+            return
+
+        # 流式完成后保存 AI 回复
+        ai_id = gen_id()
+        conn2 = get_db()
+        conn2.execute(
+            "INSERT INTO chat_messages (id, role, content, created_at, user_id) VALUES (?, ?, ?, ?, ?)",
+            (ai_id, "assistant", full_reply, now_str(), user_id),
+        )
+        conn2.commit()
+        conn2.close()
+
+        yield f"data: {json.dumps({'content': '', 'done': True, 'messageId': ai_id}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ==================== 情绪文案 ====================

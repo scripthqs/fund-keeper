@@ -1,7 +1,11 @@
 <template>
-  <div :class="['app-container', { dark: isDark }]">
-    <!-- 头部 -->
-    <header class="app-header">
+  <!-- 未登录：显示登录/注册页 -->
+  <AuthPage v-if="!isLoggedIn" @loginSuccess="onLoginSuccess" />
+
+  <!-- 已登录：显示主界面 -->
+  <div v-else :class="['app-container', { dark: isDark }]">
+    <!-- 头部（仅持仓 tab 显示） -->
+    <header v-show="activeTab === 'holdings'" class="app-header">
       <div>
         <h1 class="app-title">
           📊 理财小助理
@@ -21,10 +25,18 @@
 
     <!-- Tab 页面内容 -->
     <div v-else class="tab-content">
-      <HoldingsTab v-show="activeTab === 'holdings'" @addFund="openFundModal(null)" />
-      <TradeTab v-show="activeTab === 'trade'" />
-      <StrategyTab v-show="activeTab === 'strategy'" />
-      <MineTab v-show="activeTab === 'mine'" />
+      <div v-show="activeTab === 'holdings'">
+        <HoldingsTab @addFund="openFundModal(null)" />
+      </div>
+      <div v-show="activeTab === 'trade'">
+        <TradeTab />
+      </div>
+      <div v-show="activeTab === 'strategy'">
+        <StrategyTab />
+      </div>
+      <div v-show="activeTab === 'mine'">
+        <MineTab />
+      </div>
     </div>
 
     <!-- 底部 Tabbar -->
@@ -72,6 +84,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, provide, nextTick, watch } from 'vue'
 import { useStore } from './composables/useStore'
+import AuthPage from './components/AuthPage.vue'
 import FundModal from './components/FundModal.vue'
 import HoldingsTab from './components/tabs/HoldingsTab.vue'
 import TradeTab from './components/tabs/TradeTab.vue'
@@ -86,6 +99,31 @@ const showAdvice = ref(false)
 const fundModalVisible = ref(false)
 const editingFundId = ref(null)
 const analysisData = ref(null)
+
+// ========== 登录状态 ==========
+const isLoggedIn = ref(false)
+const userInfo = ref(null)
+
+function checkLoginState() {
+  try {
+    const saved = localStorage.getItem('fund_keeper_user')
+    if (saved) {
+      const data = JSON.parse(saved)
+      // 登录态有效期 30 天
+      if (data.loggedInAt && Date.now() - data.loggedInAt < 30 * 24 * 60 * 60 * 1000) {
+        userInfo.value = data
+        isLoggedIn.value = true
+        return true
+      }
+    }
+  } catch {}
+  return false
+}
+
+function onLoginSuccess(info) {
+  userInfo.value = info
+  isLoggedIn.value = true
+}
 
 function openFundModal(id) {
   // 先置空再设值，确保 watch 每次都能触发（即使同一只基金重复打开）
@@ -103,6 +141,7 @@ provide('closeFundModal', () => fundModalVisible.value = false)
 provide('editingFundId', editingFundId)
 provide('showAdvice', showAdvice)
 provide('analysisData', analysisData)
+provide('userInfo', userInfo)
 
 function updateTime() {
   const d = new Date()
@@ -165,6 +204,9 @@ function updateTradingBadge() {
 
 let timer, holidayTimer
 onMounted(async () => {
+  // 检查是否已登录
+  if (!checkLoginState()) return
+
   updateTime()
   await fetchTradingStatus()
   timer = setInterval(updateTime, 1000)

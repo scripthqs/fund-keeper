@@ -1,22 +1,29 @@
 """基金 CRUD 路由 + 天天基金自动更新"""
 
+import asyncio
 import json
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends, Header
+from fastapi.responses import StreamingResponse
 
-from app.database import get_db, gen_id, now_str, today_str
+from app.database import get_db, gen_id, now_str, today_str, get_current_user_id
 from app.models import (
     FundCreate, FundOut, FundUpdate, ExecuteActionRequest, ExecuteActionResponse,
     FundQueryResponse, AutoUpdateResult, AutoUpdateResponse, AddTier,
     TierRecommendRequest, TierRecommendResponse,
+    OverallAnalysisRequest, OverallAnalysisResponse,
 )
 
 from app.fund_api import query_fund_by_code, get_fund_nav_on_date, FundQueryError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/funds", tags=["基金管理"])
+
+
+async def _uid(x_username: str = Header(None, alias="X-Username")):
+    return get_current_user_id(x_username)
 
 
 def _parse_tiers(raw: str) -> list:
@@ -30,10 +37,12 @@ def _parse_tiers(raw: str) -> list:
 
 
 @router.get("")
-async def list_funds():
-    """获取所有基金"""
+async def list_funds(user_id: str = Depends(_uid)):
+    """获取当前用户的所有基金"""
     conn = get_db()
-    rows = conn.execute("SELECT * FROM funds ORDER BY created_at").fetchall()
+    rows = conn.execute(
+        "SELECT * FROM funds WHERE user_id = ? ORDER BY created_at", (user_id,)
+    ).fetchall()
     conn.close()
     result = []
     for r in rows:
@@ -47,7 +56,7 @@ async def list_funds():
 
 
 @router.post("")
-async def create_fund(fund: FundCreate):
+async def create_fund(fund: FundCreate, user_id: str = Depends(_uid)):
     """添加基金"""
     conn = get_db()
     fund_id = gen_id()
@@ -64,8 +73,8 @@ async def create_fund(fund: FundCreate):
             current_return_rate, max_investment, add_tiers,
             strategy_type, pullback_tiers,
             stop_profit_line, stop_loss_line, stop_profit_ratio, stop_loss_ratio,
-            created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            created_at, user_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             fund_id,
             data["name"],
@@ -86,10 +95,13 @@ async def create_fund(fund: FundCreate):
             data.get("stopProfitRatio", 0),
             data.get("stopLossRatio", 0),
             now_str(),
+            user_id,
         ),
     )
     conn.commit()
-    row = conn.execute("SELECT * FROM funds WHERE id = ?", (fund_id,)).fetchone()
+    row = conn.execute(
+        "SELECT * FROM funds WHERE id = ? AND user_id = ?", (fund_id, user_id)
+    ).fetchone()
     d = dict(row)
     d["add_tiers"] = _parse_tiers(d.get("add_tiers", ""))
     d["pullback_tiers"] = _parse_tiers(d.get("pullback_tiers", ""))
@@ -98,10 +110,12 @@ async def create_fund(fund: FundCreate):
 
 
 @router.put("/{fund_id}")
-async def update_fund(fund_id: str, fund: FundUpdate):
+async def update_fund(fund_id: str, fund: FundUpdate, user_id: str = Depends(_uid)):
     """编辑基金"""
     conn = get_db()
-    existing = conn.execute("SELECT id FROM funds WHERE id = ?", (fund_id,)).fetchone()
+    existing = conn.execute(
+        "SELECT id FROM funds WHERE id = ? AND user_id = ?", (fund_id, user_id)
+    ).fetchone()
     if not existing:
         conn.close()
         raise HTTPException(status_code=404, detail="基金不存在")
@@ -142,7 +156,9 @@ async def update_fund(fund_id: str, fund: FundUpdate):
         ),
     )
     conn.commit()
-    row = conn.execute("SELECT * FROM funds WHERE id = ?", (fund_id,)).fetchone()
+    row = conn.execute(
+        "SELECT * FROM funds WHERE id = ? AND user_id = ?", (fund_id, user_id)
+    ).fetchone()
     d = dict(row)
     d["add_tiers"] = _parse_tiers(d.get("add_tiers", ""))
     d["pullback_tiers"] = _parse_tiers(d.get("pullback_tiers", ""))
@@ -151,10 +167,12 @@ async def update_fund(fund_id: str, fund: FundUpdate):
 
 
 @router.delete("/{fund_id}")
-async def delete_fund(fund_id: str):
+async def delete_fund(fund_id: str, user_id: str = Depends(_uid)):
     """删除基金"""
     conn = get_db()
-    conn.execute("DELETE FROM funds WHERE id = ?", (fund_id,))
+    conn.execute(
+        "DELETE FROM funds WHERE id = ? AND user_id = ?", (fund_id, user_id)
+    )
     conn.commit()
     conn.close()
     return {"ok": True}
@@ -181,7 +199,7 @@ async def query_fund(code: str = Query(..., min_length=6, max_length=6, descript
 
 
 @router.post("/auto-update", response_model=AutoUpdateResponse)
-async def auto_update_nav():
+async def auto_update_nav(user_id: str = Depends(_uid)):
     """
     一键获取所有基金最新净值/涨跌幅（预览模式）
     从天天基金拉取最新数据并计算预期市值，不直接写入数据库，
@@ -189,7 +207,8 @@ async def auto_update_nav():
     """
     conn = get_db()
     rows = conn.execute(
-        "SELECT * FROM funds WHERE fund_code != '' AND fund_code IS NOT NULL"
+        "SELECT * FROM funds WHERE fund_code != '' AND fund_code IS NOT NULL AND user_id = ?",
+        (user_id,),
     ).fetchall()
     conn.close()
 
@@ -292,12 +311,12 @@ async def auto_update_nav():
 
 
 @router.post("/action", response_model=ExecuteActionResponse)
-async def execute_action(req: ExecuteActionRequest):
+async def execute_action(req: ExecuteActionRequest, user_id: str = Depends(_uid)):
     """执行买入/卖出操作，更新基金数据并记录历史"""
     conn = get_db()
     try:
         fund = conn.execute(
-            "SELECT * FROM funds WHERE id = ?", (req.fund_id,)
+            "SELECT * FROM funds WHERE id = ? AND user_id = ?", (req.fund_id, user_id)
         ).fetchone()
         if not fund:
             raise HTTPException(status_code=404, detail="基金不存在")
@@ -324,7 +343,7 @@ async def execute_action(req: ExecuteActionRequest):
 
         # 重新计算收益率
         updated = conn.execute(
-            "SELECT * FROM funds WHERE id = ?", (req.fund_id,)
+            "SELECT * FROM funds WHERE id = ? AND user_id = ?", (req.fund_id, user_id)
         ).fetchone()
         updated = dict(updated)
         if updated["total_buy_amount"] > 0:
@@ -361,18 +380,19 @@ async def execute_action(req: ExecuteActionRequest):
 
         history_id = gen_id()
         conn.execute(
-            """INSERT INTO history (id, date, fund_name, type, amount, return_rate, note, created_at, snapshot_before)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO history (id, date, fund_name, type, amount, return_rate, note, created_at, snapshot_before, user_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 history_id,
                 today_str(),
                 updated["name"],
                 action_type,
                 req.amount,
-                fund["current_return_rate"],  # 操作前的收益率，反映真实的操作时机
+                fund["current_return_rate"],
                 note,
                 now_str(),
                 snapshot_before,
+                user_id,
             ),
         )
 
@@ -397,11 +417,13 @@ async def execute_action(req: ExecuteActionRequest):
 
 
 @router.post("/undo/{history_id}")
-async def undo_action(history_id: str):
+async def undo_action(history_id: str, user_id: str = Depends(_uid)):
     """撤回指定操作记录，恢复基金到操作前状态"""
     conn = get_db()
     try:
-        row = conn.execute("SELECT * FROM history WHERE id = ?", (history_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM history WHERE id = ? AND user_id = ?", (history_id, user_id)
+        ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="操作记录不存在")
         row = dict(row)
@@ -417,27 +439,34 @@ async def undo_action(history_id: str):
             raise HTTPException(status_code=500, detail="撤回快照数据损坏")
 
         fund_name = row["fund_name"]
-        fund = conn.execute("SELECT * FROM funds WHERE name = ?", (fund_name,)).fetchone()
+        fund = conn.execute(
+            "SELECT * FROM funds WHERE name = ? AND user_id = ?", (fund_name, user_id)
+        ).fetchone()
         if not fund:
             raise HTTPException(status_code=404, detail="对应基金不存在，可能已被删除")
 
         fund = dict(fund)
         conn.execute(
             """UPDATE funds SET total_buy_amount=?, total_sell_amount=?,
-               current_market_value=?, current_return_rate=? WHERE name=?""",
+               current_market_value=?, current_return_rate=? WHERE name=? AND user_id=?""",
             (
                 before["total_buy_amount"],
                 before["total_sell_amount"],
                 before["current_market_value"],
                 before["current_return_rate"],
                 fund_name,
+                user_id,
             ),
         )
         # 删除该条历史记录
-        conn.execute("DELETE FROM history WHERE id = ?", (history_id,))
+        conn.execute(
+            "DELETE FROM history WHERE id = ? AND user_id = ?", (history_id, user_id)
+        )
         conn.commit()
 
-        updated = conn.execute("SELECT * FROM funds WHERE name = ?", (fund_name,)).fetchone()
+        updated = conn.execute(
+            "SELECT * FROM funds WHERE name = ? AND user_id = ?", (fund_name, user_id)
+        ).fetchone()
         result = dict(updated)
         try:
             result["add_tiers"] = json.loads(result.get("add_tiers", "")) if result.get("add_tiers") else []
@@ -513,3 +542,91 @@ async def ai_recommend_tiers(req: "TierRecommendRequest"):
         return result
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+
+@router.post("/overall-analysis", response_model=OverallAnalysisResponse)
+async def overall_analysis(req: "OverallAnalysisRequest"):
+    """AI 对全部基金持仓进行整体分析并给出操作建议"""
+    import asyncio
+    from app.config import settings
+    if not settings.llm_configured:
+        raise HTTPException(status_code=503, detail="服务端未配置 LLM API Key")
+
+    from app.agent import analyze_overall_portfolio
+    try:
+        loop = asyncio.get_running_loop()
+        analysis = await loop.run_in_executor(
+            None, analyze_overall_portfolio, req.portfolio_text
+        )
+        return OverallAnalysisResponse(analysis=analysis)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@router.post("/overall-analysis/stream")
+async def overall_analysis_stream(req: "OverallAnalysisRequest"):
+    """AI 对全部基金持仓进行整体分析（流式 SSE）"""
+    from app.config import settings
+    if not settings.llm_configured:
+        raise HTTPException(status_code=503, detail="服务端未配置 LLM API Key")
+
+    from app.agent import analyze_overall_portfolio_stream
+    import threading
+    from queue import Queue as TQueue
+
+    async def event_stream():
+        chunk_queue = TQueue()
+        error_holder = []
+        first_chunk_flag = [True]
+
+        def _run():
+            logger.info("[SSE] 后台线程启动，开始调用 LLM...")
+            try:
+                for chunk in analyze_overall_portfolio_stream(req.portfolio_text):
+                    if first_chunk_flag[0]:
+                        logger.info("[SSE] 收到首个 LLM 内容块 (长度=%d)", len(chunk))
+                        first_chunk_flag[0] = False
+                    chunk_queue.put(chunk)
+            except Exception as e:
+                logger.error("[SSE] LLM 调用异常: %s", e)
+                error_holder.append(e)
+            finally:
+                logger.info("[SSE] 后台线程结束")
+                chunk_queue.put(None)
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+
+        logger.info("[SSE] 发送 connected 事件")
+        yield f"data: {json.dumps({'connected': True}, ensure_ascii=False)}\n\n"
+
+        loop = asyncio.get_running_loop()
+        while True:
+            chunk = await loop.run_in_executor(None, chunk_queue.get)
+            if chunk is None:
+                break
+            if chunk == '__REASONING__':
+                # 推理阶段开始，通知前端显示"思考中"
+                yield f"data: {json.dumps({'reasoning': True}, ensure_ascii=False)}\n\n"
+            else:
+                yield f"data: {json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
+
+        thread.join(timeout=5)
+
+        if error_holder:
+            logger.error("[SSE] 流式整体分析失败: %s", error_holder[0])
+            yield f"data: {json.dumps({'error': str(error_holder[0])}, ensure_ascii=False)}\n\n"
+            return
+
+        logger.info("[SSE] 流式分析正常结束，发送 done")
+        yield f"data: {json.dumps({'content': '', 'done': True}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )

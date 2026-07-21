@@ -2,8 +2,8 @@
   <div class="card">
     <div class="flex items-center justify-between p-4 cursor-pointer gap-2" @click="collapsed = !collapsed">
       <div class="flex-1" style="min-width:0;">
-        <h2 class="font-semibold text-base flex items-center gap-2"><span>⚙️</span> 投资规则配置</h2>
-        <div class="text-xs font-normal" style="color:var(--text-secondary); margin-top:0.125rem;">{{ summary }}</div>
+        <h2 class="font-semibold text-base flex items-center gap-2"><span>⚙️</span> 全局默认规则</h2>
+        <div class="text-xs font-normal" style="color:var(--text-secondary); margin-top:0.125rem;">单只基金可在编辑时覆盖 · {{ summary }}</div>
       </div>
       <span class="transition-transform duration-300 text-sm" :style="{ transform: collapsed ? 'rotate(-90deg)' : 'rotate(0deg)', color: 'var(--text-secondary)' }" style="flex-shrink:0;">▼</span>
     </div>

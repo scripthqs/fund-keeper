@@ -49,7 +49,7 @@
 
 <script setup>
 import { ref, inject, nextTick, watch } from 'vue'
-import { escapeHtml } from '../utils/helpers'
+import { renderMarkdown } from '../utils/helpers'
 import { askConfirm } from '../utils/dialog'
 
 const store = inject('store')
@@ -60,15 +60,6 @@ const msgContainer = ref(null)
 
 const messages = store.chatMessages
 
-function renderMarkdown(content) {
-  let html = escapeHtml(content)
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-  html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, '<pre class="text-xs my-1 p-2 rounded" style="background:var(--bg-primary)">$2</pre>')
-  html = html.replace(/`([^`]+)`/g, '<code class="text-xs px-1 rounded" style="background:var(--bg-primary)">$1</code>')
-  html = html.replace(/\n/g, '<br>')
-  return html
-}
-
 async function send(customMsg) {
   const message = customMsg || input.value.trim()
   if (!message) return
@@ -76,7 +67,10 @@ async function send(customMsg) {
   loading.value = true
   try {
     const ctx = store.buildFundContext()
-    await store.sendChatMessage(message, ctx)
+    // 每个 chunk 到达后自动滚到底部
+    await store.sendChatMessageStream(message, ctx, () => {
+      nextTick(scrollToBottom)
+    })
   } catch (e) {
     store.chatMessages.value.push({ role: 'assistant', content: `❌ 请求失败：${e.message}\n\n请检查后端服务是否正常运行，以及 LLM API Key 是否已配置。` })
   } finally {

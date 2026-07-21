@@ -46,14 +46,16 @@ def init_db():
             stop_loss_line REAL DEFAULT 0,
             stop_profit_ratio REAL DEFAULT 0,
             stop_loss_ratio REAL DEFAULT 0,
-            created_at TEXT DEFAULT ''
+            created_at TEXT DEFAULT '',
+            user_id TEXT DEFAULT ''
         )
     """)
 
-    # 配置表（单行，id 固定为 'default'）
+    # 配置表（每个用户一条）
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS config (
-            id TEXT PRIMARY KEY DEFAULT 'default',
+            id TEXT PRIMARY KEY,
+            user_id TEXT DEFAULT '',
             data TEXT NOT NULL DEFAULT '{}'
         )
     """)
@@ -70,7 +72,8 @@ def init_db():
             note TEXT DEFAULT '',
             snapshot_before TEXT DEFAULT '',
             ai_evaluation TEXT DEFAULT '',
-            created_at TEXT DEFAULT ''
+            created_at TEXT DEFAULT '',
+            user_id TEXT DEFAULT ''
         )
     """)
 
@@ -81,7 +84,8 @@ def init_db():
             id TEXT PRIMARY KEY,
             role TEXT NOT NULL,
             content TEXT NOT NULL,
-            created_at TEXT DEFAULT ''
+            created_at TEXT DEFAULT '',
+            user_id TEXT DEFAULT ''
         )
     """)
 
@@ -90,6 +94,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS snapshots (
             id TEXT PRIMARY KEY,
             fund_id TEXT NOT NULL,
+            user_id TEXT DEFAULT '',
             date TEXT NOT NULL,
             safety_cushion REAL,
             recovery_needed REAL,
@@ -98,7 +103,17 @@ def init_db():
         )
     """)
 
-    # 插入默认配置（如果不存在）
+    # 用户表（密码明文存储）
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE,
+            password TEXT NOT NULL,
+            created_at TEXT DEFAULT ''
+        )
+    """)
+
+    # 插入默认配置（向后兼容，migrate_db 会添加 user_id 列）
     cursor.execute(
         "INSERT OR IGNORE INTO config (id, data) VALUES ('default', ?)",
         (json.dumps(DEFAULT_CONFIG, ensure_ascii=False),),
@@ -118,11 +133,22 @@ def migrate_db():
     try:
         cursor.execute("ALTER TABLE funds ADD COLUMN strategy_type TEXT DEFAULT 'downside'")
     except sqlite3.OperationalError:
-        pass  # 列已存在
+        pass
     try:
         cursor.execute("ALTER TABLE funds ADD COLUMN pullback_tiers TEXT DEFAULT ''")
     except sqlite3.OperationalError:
-        pass  # 列已存在
+        pass
+    # 添加 user_id 列（多用户数据隔离）
+    for table in ['funds', 'history', 'chat_messages', 'snapshots']:
+        try:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass
+    # config 表已有 user_id 列（CREATE TABLE 中包含），但需要处理旧表迁移
+    try:
+        cursor.execute("ALTER TABLE config ADD COLUMN user_id TEXT DEFAULT ''")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()
 
@@ -165,3 +191,21 @@ def now_str() -> str:
 
 def today_str() -> str:
     return datetime.now().strftime("%Y-%m-%d")
+
+
+def get_current_user_id(username: str) -> str:
+    """根据用户名查找 user_id，若不存在则抛出异常"""
+    if not username:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=401, detail="未登录")
+    conn = get_db()
+    try:
+        user = conn.execute(
+            "SELECT id FROM users WHERE username = ?", (username,)
+        ).fetchone()
+        if not user:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=401, detail="用户不存在")
+        return user["id"]
+    finally:
+        conn.close()
