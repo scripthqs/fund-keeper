@@ -522,13 +522,25 @@ async def ai_recommend_tiers(req: "TierRecommendRequest"):
         raise HTTPException(status_code=503, detail="服务端未配置 LLM API Key")
 
     from app.agent import recommend_add_tiers, analyze_fund_macro
+    from app.fund_api import get_fund_realtime_context, format_realtime_context
     try:
         data = req.model_dump(by_alias=True)
         fund_name = data["fundName"]
         loop = asyncio.get_running_loop()
 
+        # 抓取实时市场数据（净值趋势 + 大盘行情），注入宏观分析，弥补 LLM 知识截止日期
+        rt_text, rt_date = "", ""
+        fund_code = (data.get("fundCode") or "").strip()
+        if fund_code:
+            try:
+                rt_ctx = await get_fund_realtime_context(fund_code)
+                rt_text = format_realtime_context(rt_ctx)
+                rt_date = rt_ctx.get("nav_date", "")
+            except Exception as e:
+                logger.warning("获取实时市场数据失败（降级为纯 LLM 分析）: %s", e)
+
         # 并发执行：宏观分析 + 档位推荐同时进行，总耗时 = max(宏观, 档位) 而非 sum(宏观 + 档位)
-        macro_future = loop.run_in_executor(None, analyze_fund_macro, fund_name)
+        macro_future = loop.run_in_executor(None, analyze_fund_macro, fund_name, rt_text)
         tier_future = loop.run_in_executor(
             None,
             recommend_add_tiers,
@@ -565,6 +577,7 @@ async def ai_recommend_tiers(req: "TierRecommendRequest"):
                 "trend": macro.get("trend", ""),
                 "aggressiveness": macro.get("aggressiveness", 0),
                 "analysis": macro.get("analysis", ""),
+                "dataDate": rt_date if rt_text else "",
             }
 
         return result
@@ -751,6 +764,7 @@ async def ai_recommend_tiers_stream(req: "TierRecommendRequest"):
         raise HTTPException(status_code=503, detail="服务端未配置 LLM API Key")
 
     from app.agent import recommend_add_tiers_stream, analyze_fund_macro_stream, _safe_parse_json, _brute_parse_json
+    from app.fund_api import get_fund_realtime_context, format_realtime_context
     import threading
     from queue import Queue as TQueue
 
@@ -763,6 +777,19 @@ async def ai_recommend_tiers_stream(req: "TierRecommendRequest"):
         logger.info("[SSE AiRecommend] 发送 connected 事件")
         yield f"data: {json.dumps({'connected': True}, ensure_ascii=False)}\n\n"
 
+        # 抓取实时市场数据（净值趋势 + 大盘行情），注入宏观分析，弥补 LLM 知识截止日期
+        rt_text, rt_date = "", ""
+        fund_code = (data.get("fundCode") or "").strip()
+        if fund_code:
+            try:
+                rt_ctx = await get_fund_realtime_context(fund_code)
+                rt_text = format_realtime_context(rt_ctx)
+                rt_date = rt_ctx.get("nav_date", "")
+                if rt_text:
+                    logger.info("[SSE AiRecommend] 实时市场数据已获取（净值截至 %s），注入宏观分析", rt_date)
+            except Exception as e:
+                logger.warning("[SSE AiRecommend] 获取实时市场数据失败（降级为纯 LLM 分析）: %s", e)
+
         # ========== 阶段 1：宏观政策分析（流式） ==========
         logger.info("[SSE AiRecommend] 阶段1: 开始宏观分析")
         yield f"data: {json.dumps({'status': 'macro_analyzing'}, ensure_ascii=False)}\n\n"
@@ -773,7 +800,7 @@ async def ai_recommend_tiers_stream(req: "TierRecommendRequest"):
 
         macro_thread = threading.Thread(
             target=_run_llm_stream_filter,
-            args=(analyze_fund_macro_stream(fund_name), macro_content_queue,
+            args=(analyze_fund_macro_stream(fund_name, rt_text), macro_content_queue,
                   macro_error, macro_full_text),
             daemon=True,
         )
@@ -807,6 +834,7 @@ async def ai_recommend_tiers_stream(req: "TierRecommendRequest"):
                     "trend": parsed.get("trend", ""),
                     "aggressiveness": parsed.get("aggressiveness", 0),
                     "analysis": parsed.get("analysis", ""),
+                    "dataDate": rt_date if rt_text else "",
                 }
                 logger.info("[SSE AiRecommend] 宏观分析 JSON 解析成功: sector=%s, score=%s",
                             macro_result["sector"], macro_result["policyScore"])

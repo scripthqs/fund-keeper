@@ -272,12 +272,18 @@
                 <span>📡 宏观分析：未启用</span>
                 <span :style="strategyStyleTag">{{ strategyLabel }}</span>
               </div>
-              <div v-else class="flex items-center gap-1 mb-1 font-medium">
+              <div v-else class="flex items-center gap-1 mb-1 font-medium flex-wrap">
                 <span>📡 宏观分析：{{ macroAnalysis.sector }}</span>
                 <span :style="policyScoreStyle"
                   >{{ macroAnalysis.policyScore }}分</span
                 >
                 <span :style="strategyStyleTag">{{ strategyLabel }}</span>
+                <span
+                  v-if="macroAnalysis.dataDate"
+                  class="font-normal"
+                  style="color: var(--text-tertiary); font-size: 11px"
+                  >· 实时行情截至 {{ macroAnalysis.dataDate }}</span
+                >
               </div>
               <div
                 v-if="macroAnalysis.keyPolicies?.length && !macroAnalysis.error"
@@ -801,6 +807,7 @@ async function aiRecommend() {
 
     for await (const event of api.aiRecommendTiersStream({
       fundName: f.name || "待配置基金",
+      fundCode: (f.fundCode || "").trim(),
       totalBuyAmount: f.totalBuyAmount || f.initialPrincipal,
       initialPrincipal: f.initialPrincipal,
       maxInvestment: f.maxInvestment || 0,

@@ -217,6 +217,7 @@ class ExecuteActionResponse(BaseModel):
 
 class TierRecommendRequest(BaseModel):
     fund_name: str = Field("", alias="fundName")
+    fund_code: str = Field("", alias="fundCode")
     total_buy_amount: float = Field(0, alias="totalBuyAmount")
     initial_principal: float = Field(0, alias="initialPrincipal")
     max_investment: float = Field(0, alias="maxInvestment")

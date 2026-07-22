@@ -7,7 +7,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import math
 import re
 import socket
 import ssl
@@ -529,3 +531,145 @@ def _generate_diagnosis_advice(api_results: dict, dns: dict, overall: dict) -> l
                 advice.append(f"连接拒绝({key}): 防火墙可能拦截了出站请求 -> 检查云平台安全组/防火墙规则")
 
     return advice or ["未知错误，请查看上方详细错误信息手动排查"]
+
+
+# ==================== 实时市场数据（供 AI 宏观分析注入，弥补 LLM 知识截止日期） ====================
+
+# 新浪财经指数行情接口：上证指数 / 沪深300 / 创业板指 / 深证成指
+SINA_INDEX_URL = "https://hq.sinajs.cn/list=sh000001,sh000300,sz399006,sz399001"
+
+
+async def get_index_realtime_quotes() -> list[dict]:
+    """获取主要指数实时行情（新浪财经）
+
+    Returns:
+        [{"name": "上证指数", "price": 3093.7, "change_pct": 0.52}, ...]
+    """
+    try:
+        resp = await _safe_https_request(
+            "GET", SINA_INDEX_URL,
+            headers={"Referer": "https://finance.sina.com.cn"},
+        )
+        resp.raise_for_status()
+        text = resp.content.decode("gbk", errors="ignore")
+        quotes = []
+        for m in re.finditer(r'hq_str_\w+="([^"]*)"', text):
+            fields = m.group(1).split(",")
+            if len(fields) < 4 or not fields[0]:
+                continue
+            try:
+                price = float(fields[3])
+                prev_close = float(fields[2])
+                if prev_close <= 0:
+                    continue
+                change_pct = round((price - prev_close) / prev_close * 100, 2)
+                quotes.append({"name": fields[0], "price": price, "change_pct": change_pct})
+            except (ValueError, TypeError):
+                continue
+        return quotes
+    except Exception as e:
+        logger.warning("获取指数实时行情失败: %s", e)
+        return []
+
+
+async def get_fund_realtime_context(code: str) -> dict:
+    """汇总基金实时市场数据，供 AI 宏观分析注入 prompt
+
+    数据来源（均为免费公开接口）：
+    - 近 70 个交易日净值（东方财富）→ 近1周/1月/3月收益、年化波动率、近3月最大回撤
+    - 大盘指数实时行情（新浪财经）→ 上证/沪深300/创业板/深成指当前点位与涨跌幅
+
+    Returns:
+        {
+            "code": "000001",
+            "nav_date": "2026-07-21",   # 净值数据截止日期
+            "stats": {"week_return": ..., "month_return": ..., ...},
+            "indices": [{"name": ..., "price": ..., "change_pct": ...}],
+        }
+        任何一步失败都会优雅降级（对应字段为空），不抛异常
+    """
+    ctx: dict = {"code": code, "nav_date": "", "stats": {}, "indices": []}
+    if not code or not re.fullmatch(r"\d{6}", code):
+        return ctx
+
+    history, indices = await asyncio.gather(
+        get_fund_nav_history(code, page_size=70),
+        get_index_realtime_quotes(),
+        return_exceptions=True,
+    )
+    ctx["indices"] = indices if isinstance(indices, list) else []
+
+    if isinstance(history, Exception):
+        _log_network_error("实时上下文-净值历史", code, history)
+        history = []
+
+    if len(history) >= 2:
+        navs = [h["nav"] for h in history if h.get("nav")]  # 最新在前
+        ctx["nav_date"] = history[0].get("date", "")
+
+        stats: dict = {}
+
+        def _ret(n: int) -> Optional[float]:
+            if len(navs) > n and navs[n]:
+                return round((navs[0] / navs[n] - 1) * 100, 2)
+            return None
+
+        for key, n in (("week_return", 5), ("month_return", 20), ("quarter_return", 60)):
+            r = _ret(n)
+            if r is not None:
+                stats[key] = r
+
+        # 近 20 日年化波动率
+        changes = []
+        for h in history[:20]:
+            try:
+                changes.append(float(h.get("daily_change") or 0))
+            except (ValueError, TypeError):
+                pass
+        if len(changes) >= 10:
+            mean = sum(changes) / len(changes)
+            var = sum((c - mean) ** 2 for c in changes) / (len(changes) - 1)
+            stats["volatility_annual"] = round(math.sqrt(var) * math.sqrt(252), 1)
+
+        # 近 3 月最大回撤（净值序列转时间正序后计算 peak-to-trough）
+        if len(navs) >= 2:
+            seq = list(reversed(navs[:60]))
+            peak, max_dd = seq[0], 0.0
+            for v in seq:
+                peak = max(peak, v)
+                if peak > 0:
+                    max_dd = min(max_dd, (v - peak) / peak * 100)
+            stats["max_drawdown_3m"] = round(max_dd, 2)
+
+        ctx["stats"] = stats
+
+    return ctx
+
+
+def format_realtime_context(ctx: dict) -> str:
+    """把实时市场数据格式化为注入 LLM prompt 的文本块，无数据时返回空串"""
+    if not ctx:
+        return ""
+    lines = []
+    stats = ctx.get("stats") or {}
+    if stats:
+        parts = []
+        if "week_return" in stats:
+            parts.append(f"近1周 {stats['week_return']:+}%")
+        if "month_return" in stats:
+            parts.append(f"近1月 {stats['month_return']:+}%")
+        if "quarter_return" in stats:
+            parts.append(f"近3月 {stats['quarter_return']:+}%")
+        if "volatility_annual" in stats:
+            parts.append(f"年化波动率 {stats['volatility_annual']}%")
+        if "max_drawdown_3m" in stats:
+            parts.append(f"近3月最大回撤 {stats['max_drawdown_3m']}%")
+        if parts:
+            lines.append(
+                f"该基金近期走势（净值截至 {ctx.get('nav_date') or '未知'}）：" + "，".join(parts)
+            )
+    indices = ctx.get("indices") or []
+    if indices:
+        parts = [f"{q['name']} {q['price']:.0f}点（今日{q['change_pct']:+}%）" for q in indices]
+        lines.append("大盘实时行情：" + "；".join(parts))
+    return "\n".join(lines)
