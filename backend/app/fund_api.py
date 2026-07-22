@@ -8,11 +8,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 import re
 import socket
 import ssl
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -287,18 +289,111 @@ async def get_fund_nav_history(
             logger.warning("获取基金 %s 历史净值失败: %s", code, data.get("ErrMsg"))
             return []
 
-        items = data.get("Data", {}).get("LSJZList", [])
+        items = (data.get("Data") or {}).get("LSJZList", [])
         result = []
         for item in items:
+            dwjz = item.get("DWJZ")
+            if dwjz in (None, ""):
+                continue  # 跳过无净值日期（如QDII节假日/暂停披露），长周期拉取时常见
+            try:
+                nav = float(dwjz)
+            except (ValueError, TypeError):
+                continue
+            try:
+                acc_nav = float(item.get("LJJZ") or 0)
+            except (ValueError, TypeError):
+                acc_nav = 0.0
             result.append({
                 "date": item.get("FSRQ", ""),               # 净值日期
-                "nav": float(item.get("DWJZ", 0)),           # 单位净值
-                "accumulated_nav": float(item.get("LJJZ", 0)),  # 累计净值
+                "nav": nav,                                  # 单位净值
+                "accumulated_nav": acc_nav,                  # 累计净值
                 "daily_change": item.get("JZZZL", "0"),     # 日涨幅(%)
             })
         return result
     except Exception as e:
         _log_network_error("历史净值", code, e)
+        return []
+
+
+async def get_fund_nav_series(code: str) -> list[dict]:
+    """获取基金全量历史净值序列（东方财富 pingzhongdata，单次请求，最新在前）
+
+    lsjz 接口单页上限 20 条，长周期数据需逐页翻取（太慢）；
+    pingzhongdata 的 Data_netWorthTrend 包含成立以来全部日度数据，一次请求即可，
+    供回测 / 长周期统计使用。
+
+    Returns:
+        [{ "date": "2024-01-15", "nav": 1.2345, "accumulated_nav": 2.3456, "daily_change": "0.12" }, ...]
+        与 get_fund_nav_history 同构（最新在前），失败返回 []
+    """
+    try:
+        resp = await _safe_https_request("GET", FUND_INFO_URL.format(code=code))
+        resp.raise_for_status()
+        text = resp.text
+
+        def _extract_js_array(var_name: str) -> str:
+            """bracket-match 提取 `var_name = [...]` 的数组字面量"""
+            m = re.search(var_name + r"\s*=\s*\[", text)
+            if not m:
+                return ""
+            depth = 0
+            for i in range(m.end() - 1, len(text)):
+                ch = text[i]
+                if ch == "[":
+                    depth += 1
+                elif ch == "]":
+                    depth -= 1
+                    if depth == 0:
+                        return text[m.end() - 1 : i + 1]
+            return ""
+
+        trend_raw = _extract_js_array("Data_netWorthTrend")
+        if not trend_raw:
+            logger.warning("基金 %s pingzhongdata 中未找到净值序列", code)
+            return []
+
+        trend = json.loads(trend_raw)
+
+        # 累计净值（可选，失败则回退为单位净值）
+        acc_map: dict = {}
+        acc_raw = _extract_js_array("Data_ACWorthTrend")
+        if acc_raw:
+            try:
+                for ts, val in json.loads(acc_raw):
+                    d = datetime.fromtimestamp(
+                        ts / 1000, tz=timezone(timedelta(hours=8))
+                    ).strftime("%Y-%m-%d")
+                    acc_map[d] = val
+            except Exception:
+                pass
+
+        result = []
+        for point in trend:
+            try:
+                nav = float(point.get("y") or 0)
+                if nav <= 0:
+                    continue
+                date = datetime.fromtimestamp(
+                    point["x"] / 1000, tz=timezone(timedelta(hours=8))
+                ).strftime("%Y-%m-%d")
+                chg = point.get("equityReturn")
+                result.append({
+                    "date": date,
+                    "nav": nav,
+                    "accumulated_nav": float(acc_map.get(date) or nav),
+                    "daily_change": str(chg if chg is not None else "0"),
+                })
+            except (ValueError, TypeError, KeyError):
+                continue
+        result.reverse()  # 原序列为时间正序 → 翻转为最新在前
+        if result:
+            logger.info(
+                "基金 %s 全量净值序列: %d 条（%s ~ %s）",
+                code, len(result), result[-1]["date"], result[0]["date"],
+            )
+        return result
+    except Exception as e:
+        _log_network_error("全量净值序列", code, e)
         return []
 
 
@@ -392,7 +487,7 @@ def _log_network_error(api_name: str, code: str, exc: Exception) -> None:
             "[%s] 基金 %s 读取超时(ReadTimeout): %s | 接口响应慢，可能服务端限流",
             api_name, code, exc_msg,
         )
-    elif isinstance(exc, (ssl.SSLError, ssl.SSLCertVerificationError, httpx.SSLError)):
+    elif isinstance(exc, (ssl.SSLError, ssl.SSLCertVerificationError)):
         logger.error(
             "[%s] 基金 %s SSL错误(SSL): %s | 远程环境可能缺少CA证书，可尝试设置 verify=False",
             api_name, code, exc_msg,
@@ -538,6 +633,94 @@ def _generate_diagnosis_advice(api_results: dict, dns: dict, overall: dict) -> l
 # 新浪财经指数行情接口：上证指数 / 沪深300 / 创业板指 / 深证成指
 SINA_INDEX_URL = "https://hq.sinajs.cn/list=sh000001,sh000300,sz399006,sz399001"
 
+# 中证指数官网日度行情接口（peg 字段实为市盈率 PE，每日一条）
+CSINDEX_PERF_URL = "https://www.csindex.com.cn/csindex-home/perf/index-perf"
+
+# 估值分位缓存：{index_code: {"day": "2026-07-22", "data": {...}}}，按自然日缓存（数据日频更新）
+_valuation_cache: dict = {}
+# 净值历史缓存：{(code, page_size): (expire_ts, data)}，TTL 10 分钟，避免 AI 推荐反复点击时重复拉取
+_nav_history_cache: dict = {}
+_NAV_CACHE_TTL = 600
+
+
+async def get_index_pe_percentile(index_code: str, index_name: str, years: int = 10) -> dict:
+    """获取指数 PE 及近 N 年百分位（中证指数官网，免费公开接口）
+
+    百分位 = 近 N 年中有多少比例的交易日 PE 低于当前值，越高代表越贵。
+
+    Returns:
+        {"name": "沪深300", "pe": 14.53, "percentile": 78.0, "date": "20260721"}
+        失败时 pe/percentile 为 None（优雅降级）
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+    cached = _valuation_cache.get(index_code)
+    if cached and cached.get("day") == today:
+        return cached["data"]
+
+    result = {"name": index_name, "pe": None, "percentile": None, "date": ""}
+    try:
+        end = datetime.now().strftime("%Y%m%d")
+        start = (datetime.now() - timedelta(days=int(years * 365.25) + 5)).strftime("%Y%m%d")
+        resp = await _safe_https_request(
+            "GET", CSINDEX_PERF_URL,
+            params={"indexCode": index_code, "startDate": start, "endDate": end},
+        )
+        resp.raise_for_status()
+        rows = (resp.json() or {}).get("data") or []
+        pes = []
+        for row in rows:
+            try:
+                if row.get("peg"):
+                    pes.append(float(row["peg"]))
+            except (ValueError, TypeError):
+                pass
+        if pes:
+            cur = pes[-1]
+            percentile = round(sum(1 for p in pes if p < cur) / len(pes) * 100, 1)
+            result = {
+                "name": index_name,
+                "pe": round(cur, 2),
+                "percentile": percentile,
+                "date": rows[-1].get("tradeDate", ""),
+            }
+            logger.info("指数 %s PE=%s，近%d年分位=%s%%", index_name, cur, years, percentile)
+    except Exception as e:
+        logger.warning("获取指数 %s 估值分位失败: %s", index_name, e)
+
+    _valuation_cache[index_code] = {"day": today, "data": result}
+    return result
+
+
+async def get_index_valuations() -> list[dict]:
+    """并发获取主要宽基指数估值分位（沪深300 / 中证500）"""
+    results = await asyncio.gather(
+        get_index_pe_percentile("000300", "沪深300"),
+        get_index_pe_percentile("000905", "中证500"),
+        return_exceptions=True,
+    )
+    return [r for r in results if isinstance(r, dict) and r.get("pe") is not None]
+
+
+async def _get_nav_history_cached(code: str, page_size: int) -> list:
+    """带 10 分钟缓存的净值历史查询（仅供 AI 分析场景使用，自动更新等场景仍走实时查询）
+
+    lsjz 接口单页上限 20 条：page_size ≤ 20 走 lsjz；
+    更大跨度走 pingzhongdata 全量序列（单次请求），截取前 page_size 条。
+    """
+    key = (code, page_size)
+    now = datetime.now().timestamp()
+    cached = _nav_history_cache.get(key)
+    if cached and cached[0] > now:
+        return cached[1]
+    if page_size > 20:
+        series = await get_fund_nav_series(code)
+        data = series[:page_size]
+    else:
+        data = await get_fund_nav_history(code, page_size=page_size)
+    if data:
+        _nav_history_cache[key] = (now + _NAV_CACHE_TTL, data)
+    return data
+
 
 async def get_index_realtime_quotes() -> list[dict]:
     """获取主要指数实时行情（新浪财经）
@@ -572,12 +755,16 @@ async def get_index_realtime_quotes() -> list[dict]:
         return []
 
 
-async def get_fund_realtime_context(code: str) -> dict:
+async def get_fund_realtime_context(code: str, nav_days: int = 70) -> dict:
     """汇总基金实时市场数据，供 AI 宏观分析注入 prompt
 
     数据来源（均为免费公开接口）：
-    - 近 70 个交易日净值（东方财富）→ 近1周/1月/3月收益、年化波动率、近3月最大回撤
+    - 近 nav_days 个交易日净值（东方财富，10 分钟缓存）→ 近1周/1月/3月收益、年化波动率、近3月最大回撤
     - 大盘指数实时行情（新浪财经）→ 上证/沪深300/创业板/深成指当前点位与涨跌幅
+    - 指数估值分位（中证指数官网，按日缓存）→ 沪深300/中证500 PE 及近10年百分位
+
+    Args:
+        nav_days: 拉取的净值历史长度，AI 推荐场景传 500（兼顾回测），默认 70
 
     Returns:
         {
@@ -585,23 +772,28 @@ async def get_fund_realtime_context(code: str) -> dict:
             "nav_date": "2026-07-21",   # 净值数据截止日期
             "stats": {"week_return": ..., "month_return": ..., ...},
             "indices": [{"name": ..., "price": ..., "change_pct": ...}],
+            "valuations": [{"name": "沪深300", "pe": 14.53, "percentile": 78.0, ...}],
+            "history": [...],           # 原始净值列表（供回测复用，避免二次请求）
         }
         任何一步失败都会优雅降级（对应字段为空），不抛异常
     """
-    ctx: dict = {"code": code, "nav_date": "", "stats": {}, "indices": []}
+    ctx: dict = {"code": code, "nav_date": "", "stats": {}, "indices": [], "valuations": [], "history": []}
     if not code or not re.fullmatch(r"\d{6}", code):
         return ctx
 
-    history, indices = await asyncio.gather(
-        get_fund_nav_history(code, page_size=70),
+    history, indices, valuations = await asyncio.gather(
+        _get_nav_history_cached(code, nav_days),
         get_index_realtime_quotes(),
+        get_index_valuations(),
         return_exceptions=True,
     )
     ctx["indices"] = indices if isinstance(indices, list) else []
+    ctx["valuations"] = valuations if isinstance(valuations, list) else []
 
     if isinstance(history, Exception):
         _log_network_error("实时上下文-净值历史", code, history)
         history = []
+    ctx["history"] = history
 
     if len(history) >= 2:
         navs = [h["nav"] for h in history if h.get("nav")]  # 最新在前
@@ -672,4 +864,14 @@ def format_realtime_context(ctx: dict) -> str:
     if indices:
         parts = [f"{q['name']} {q['price']:.0f}点（今日{q['change_pct']:+}%）" for q in indices]
         lines.append("大盘实时行情：" + "；".join(parts))
+    valuations = ctx.get("valuations") or []
+    if valuations:
+        parts = [
+            f"{v['name']} PE {v['pe']}（近10年 {v['percentile']}% 分位）"
+            for v in valuations
+        ]
+        lines.append(
+            "指数估值（截至 " + (valuations[0].get("date") or "未知") + "）：" + "；".join(parts)
+            + "。分位越高代表越贵：>70% 偏高估，30-70% 合理，<30% 偏低估"
+        )
     return "\n".join(lines)

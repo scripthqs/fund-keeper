@@ -189,9 +189,11 @@
                 />
                 <span class="text-xs font-medium" style="color: #52c41a">
                   {{
-                    aiRecommending && phase === "macro"
-                      ? "📡 宏观政策分析中..."
-                      : "📡 宏观政策分析"
+                    fetchingData
+                      ? "📈 正在获取行情、估值与回测数据..."
+                      : aiRecommending && phase === "macro"
+                        ? "📡 宏观政策分析中..."
+                        : "📡 宏观政策分析"
                   }}
                 </span>
               </div>
@@ -307,6 +309,26 @@
                   >原因：{{ macroAnalysis.message }}</span
                 >
               </div>
+            </div>
+            <!-- 当前档位参数的历史回测摘要 -->
+            <div
+              v-if="backtestSummary"
+              class="mx-3 mb-2 px-3 py-2 rounded-lg text-xs"
+              style="
+                background: rgba(24, 144, 255, 0.06);
+                border: 1px solid rgba(24, 144, 255, 0.15);
+                color: var(--text-secondary);
+                line-height: 1.6;
+              "
+            >
+              📊 原档位回测（{{ backtestSummary.start_date }} ~
+              {{ backtestSummary.end_date }}）：触发
+              {{ backtestSummary.trigger_count }}/{{
+                backtestSummary.tier_count
+              }}
+              档，策略 {{ signed(backtestSummary.strategy_return) }} vs 持有
+              {{ signed(backtestSummary.hold_return) }}，资金利用率
+              {{ backtestSummary.utilization }}%
             </div>
             <div class="tier-grid p-3 flex flex-col gap-2" :key="tierKey">
               <div
@@ -472,6 +494,8 @@ const macroDisplayText = ref(""); // 打字机显示的宏观文本
 const macroTypewriterRunning = ref(false);
 const phase = ref(""); // 当前流式阶段：'macro' | 'tier'
 const macroAnalysis = ref(null);
+const backtestSummary = ref(null); // 当前档位参数的历史回测摘要
+const fetchingData = ref(false); // 正在抓取行情/估值/回测数据（LLM 开始前）
 const strategyStyle = ref("");
 const hasInteracted = ref(false);
 const visible = ref(true);
@@ -675,6 +699,12 @@ function markInteracted() {
   hasInteracted.value = true;
 }
 
+/** 带符号的百分比展示：12.3 → "+12.3%"，-4.5 → "-4.5%" */
+function signed(v) {
+  if (v == null) return "--";
+  return (v >= 0 ? "+" : "") + v + "%";
+}
+
 function onDateConfirm(date) {
   form.value.buyDate = date.toISOString().split("T")[0];
   showCalendar.value = false;
@@ -727,6 +757,8 @@ watch(
     phase.value = "";
     aiStreamStatus.value = "";
     macroAnalysis.value = null;
+    backtestSummary.value = null;
+    fetchingData.value = false;
     strategyStyle.value = "";
 
     if (id) {
@@ -792,6 +824,8 @@ async function aiRecommend() {
   macroDisplayText.value = "";
   macroTypewriterRunning.value = false;
   macroAnalysis.value = null;
+  backtestSummary.value = null;
+  fetchingData.value = false;
   phase.value = "macro";
   aiStreamStatus.value = "";
 
@@ -808,6 +842,9 @@ async function aiRecommend() {
     for await (const event of api.aiRecommendTiersStream({
       fundName: f.name || "待配置基金",
       fundCode: (f.fundCode || "").trim(),
+      currentTiers: (f.addTiers || [])
+        .filter((t) => t.ratio > 0 && t.line < 0)
+        .map((t) => ({ line: t.line, ratio: t.ratio })),
       totalBuyAmount: f.totalBuyAmount || f.initialPrincipal,
       initialPrincipal: f.initialPrincipal,
       maxInvestment: f.maxInvestment || 0,
@@ -826,10 +863,12 @@ async function aiRecommend() {
       }
       if (event.status) {
         const statusMap = {
+          fetching_data: "📈 正在获取行情、估值与回测数据...",
           macro_analyzing: "📡 正在分析宏观政策环境...",
           generating_strategy: "📊 正在生成加仓档位策略...",
         };
         aiStreamStatus.value = statusMap[event.status] || aiStreamStatus.value;
+        fetchingData.value = event.status === "fetching_data";
         // 切换阶段
         if (event.status === "generating_strategy") {
           // 结束宏观打字机
@@ -887,6 +926,7 @@ async function aiRecommend() {
           form.value.stopLossRatio = result.stopLossRatio;
         aiExplanation.value = result.explanation || "";
         macroAnalysis.value = result.macroAnalysis || null;
+        backtestSummary.value = result.backtest || null;
         strategyStyle.value = result.strategyStyle || "";
         // 等待两个打字机完成显示
         clearTypewriter("macro");

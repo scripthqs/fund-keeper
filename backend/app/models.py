@@ -224,6 +224,7 @@ class TierRecommendRequest(BaseModel):
     current_return_rate: float = Field(0, alias="currentReturnRate")
     current_market_value: float = Field(0, alias="currentMarketValue")
     hold_days: int = Field(0, alias="holdDays")
+    current_tiers: List["AddTier"] = Field(default_factory=list, alias="currentTiers")  # 用户当前档位，用于回测验证
 
     model_config = {"populate_by_name": True}
 

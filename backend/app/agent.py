@@ -836,7 +836,7 @@ def analyze_fund_macro_stream(fund_name: str, realtime_context: str = ""):
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_message},
     ]
-    yield from _call_llm_stream(messages, temperature=0.3, max_tokens=800)
+    yield from _call_llm_stream(messages, temperature=0.3, max_tokens=1400)
 
 
 # ==================== AI 推荐加仓档位 ====================
@@ -888,6 +888,11 @@ JSON 格式（示例值，请按实际数据生成）：
 
 【宏观微调(辅助)】在预算框架内微调：policyScore≥80→比例上浮10-20%+间隔缩小1-2%；40-79→维持；<40→比例下调10-20%+间隔拉大1-2%。
 
+【估值与回测(如提供)】若用户消息附带指数估值分位与档位回测数据，必须参考：
+- 估值分位>70%(偏高估)→档位整体偏保守，首档更深、比例取区间下限；30-70%(合理)→正常；<30%(偏低估)→可积极，首档更浅、比例取区间上限。
+- 回测资金利用率<50%→说明末档过深从未触发，收窄档距；策略收益明显跑输一次性持有→调整档位深度或比例分配。
+- 策略分析文本第4条中引用估值分位和回测结论各一句。
+
 【止盈止损】stopProfitLine: 股基15-35%,债基5-10%,持有<30天偏低。stopLossLine: 股基-20~-35%,保守型-15~-20%。stopProfitRatio: 15-30%。stopLossRatio: 50-80%。
 
 【style/explanation】strategyStyle选:"上涨回调型"/"预算充裕型"/"预算平衡型"/"保守防御型"。explanation≤100字: 策略选择→预算约束→比例逻辑→宏观微调(如适用)→止盈止损。pullback策略需解释为何回调加仓。"""
@@ -902,12 +907,14 @@ def recommend_add_tiers(
     current_market_value: float,
     hold_days: int = 0,
     macro_analysis: Optional[dict] = None,
+    market_context: str = "",
 ) -> dict:
     """
     AI 根据基金情况 + 宏观政策分析，推荐合理的金字塔加仓档位 + 止盈止损
 
     Args:
         macro_analysis: 宏观政策分析结果，由 analyze_fund_macro() 返回
+        market_context: 实时市场数据 + 回测结论文本（估值分位、档位回测等）
 
     Returns:
         {"tiers": [...], "stopProfitLine": float, "stopLossLine": float,
@@ -991,6 +998,14 @@ def recommend_add_tiers(
         else:
             bold_prefix = ""
 
+        # 实时市场数据 + 回测结论（估值分位、档位有效性验证）
+        market_text = ""
+        if market_context:
+            market_text = (
+                f"\n\n📊 以下为实时市场数据与当前档位参数的历史回测（真实数据，请认真参考）：\n"
+                f"{market_context}\n"
+            )
+
         user_message = (
             f"请为以下基金推荐 4 档金字塔加仓方案和止盈止损线。\n"
             f"记住：先看预算决定比例框架，再用宏观分析微调。\n"
@@ -1002,6 +1017,7 @@ def recommend_add_tiers(
             f"当前市值：¥{current_market_value:,.2f}\n"
             f"已持有天数：{hold_days}天"
             f"{macro_text}"
+            f"{market_text}"
         )
 
         messages = [
@@ -1052,6 +1068,7 @@ def recommend_add_tiers(
 def _build_recommend_user_message(
     fund_name, total_buy_amount, initial_principal, max_investment,
     current_return_rate, current_market_value, hold_days, macro_analysis,
+    market_context="",
 ):
     """构建加仓档位推荐的 user message（复用）"""
     remaining = max_investment - total_buy_amount if max_investment > 0 else float("inf")
@@ -1150,6 +1167,14 @@ def _build_recommend_user_message(
     else:
         hold_label = f"持有{h}天（超过1年），属长期持有，应有足够耐心，止盈止损可设宽一些"
 
+    # 实时市场数据 + 回测结论（估值分位、档位有效性验证）
+    market_text = ""
+    if market_context:
+        market_text = (
+            f"\n\n📊 以下为实时市场数据与当前档位参数的历史回测（真实数据，请认真参考）：\n"
+            f"{market_context}\n"
+        )
+
     return (
         f"请为以下基金推荐 4 档金字塔加仓方案和止盈止损线。\n"
         f"\n"
@@ -1169,6 +1194,7 @@ def _build_recommend_user_message(
         f"3. 最后参考宏观政策做微调（上浮或下调10-20%）\n"
         f"4. 止盈止损要根据当前收益率位置和持有天数来定——套太深止损别太近，浮盈多止盈要积极\n"
         f"{macro_text}"
+        f"{market_text}"
     )
 
 
@@ -1181,11 +1207,13 @@ def recommend_add_tiers_stream(
     current_market_value: float,
     hold_days: int = 0,
     macro_analysis: Optional[dict] = None,
+    market_context: str = "",
 ):
     """流式版：AI 推荐加仓档位（生成器），返回原始 LLM 流式输出，调用方自行解析 JSON"""
     user_message = _build_recommend_user_message(
         fund_name, total_buy_amount, initial_principal, max_investment,
         current_return_rate, current_market_value, hold_days, macro_analysis,
+        market_context,
     )
     messages = [
         {"role": "system", "content": TIER_RECOMMEND_PROMPT},

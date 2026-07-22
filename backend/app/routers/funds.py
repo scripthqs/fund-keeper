@@ -523,21 +523,37 @@ async def ai_recommend_tiers(req: "TierRecommendRequest"):
 
     from app.agent import recommend_add_tiers, analyze_fund_macro
     from app.fund_api import get_fund_realtime_context, format_realtime_context
+    from app.backtest import backtest_pyramid_strategy, format_backtest_summary
+    from app.database import DEFAULT_CONFIG
     try:
         data = req.model_dump(by_alias=True)
         fund_name = data["fundName"]
         loop = asyncio.get_running_loop()
 
-        # 抓取实时市场数据（净值趋势 + 大盘行情），注入宏观分析，弥补 LLM 知识截止日期
-        rt_text, rt_date = "", ""
+        # 抓取实时市场数据（净值趋势 + 大盘行情 + 估值分位），注入宏观分析，弥补 LLM 知识截止日期
+        rt_text, rt_date, market_context, backtest_summary = "", "", "", None
         fund_code = (data.get("fundCode") or "").strip()
         if fund_code:
             try:
-                rt_ctx = await get_fund_realtime_context(fund_code)
+                rt_ctx = await get_fund_realtime_context(fund_code, nav_days=500)
                 rt_text = format_realtime_context(rt_ctx)
                 rt_date = rt_ctx.get("nav_date", "")
+                # 用当前档位参数跑历史回测（纯计算，毫秒级），验证参数有效性
+                history = rt_ctx.get("history") or []
+                if history and data.get("initialPrincipal"):
+                    bt = backtest_pyramid_strategy(
+                        history,
+                        initial_principal=data["initialPrincipal"],
+                        tiers=data.get("currentTiers") or DEFAULT_CONFIG["addTiers"],
+                        max_investment=data.get("maxInvestment") or 0,
+                    )
+                    if bt:
+                        backtest_summary = bt
+                market_context = "\n".join(
+                    t for t in (rt_text, format_backtest_summary(backtest_summary)) if t
+                )
             except Exception as e:
-                logger.warning("获取实时市场数据失败（降级为纯 LLM 分析）: %s", e)
+                logger.warning("获取实时市场数据/回测失败（降级为纯 LLM 分析）: %s", e)
 
         # 并发执行：宏观分析 + 档位推荐同时进行，总耗时 = max(宏观, 档位) 而非 sum(宏观 + 档位)
         macro_future = loop.run_in_executor(None, analyze_fund_macro, fund_name, rt_text)
@@ -552,6 +568,7 @@ async def ai_recommend_tiers(req: "TierRecommendRequest"):
             data["currentMarketValue"],
             data.get("holdDays", 0),
             None,  # 先不传宏观分析，档位推荐独立运行
+            market_context,
         )
 
         # 等待两个任务完成（并行等待，总时间取最长的那个）
@@ -579,6 +596,9 @@ async def ai_recommend_tiers(req: "TierRecommendRequest"):
                 "analysis": macro.get("analysis", ""),
                 "dataDate": rt_date if rt_text else "",
             }
+
+        if backtest_summary:
+            result["backtest"] = backtest_summary
 
         return result
     except RuntimeError as e:
@@ -765,6 +785,8 @@ async def ai_recommend_tiers_stream(req: "TierRecommendRequest"):
 
     from app.agent import recommend_add_tiers_stream, analyze_fund_macro_stream, _safe_parse_json, _brute_parse_json
     from app.fund_api import get_fund_realtime_context, format_realtime_context
+    from app.backtest import backtest_pyramid_strategy, format_backtest_summary
+    from app.database import DEFAULT_CONFIG
     import threading
     from queue import Queue as TQueue
 
@@ -777,18 +799,33 @@ async def ai_recommend_tiers_stream(req: "TierRecommendRequest"):
         logger.info("[SSE AiRecommend] 发送 connected 事件")
         yield f"data: {json.dumps({'connected': True}, ensure_ascii=False)}\n\n"
 
-        # 抓取实时市场数据（净值趋势 + 大盘行情），注入宏观分析，弥补 LLM 知识截止日期
-        rt_text, rt_date = "", ""
+        # 抓取实时市场数据（净值趋势 + 大盘行情 + 估值分位）+ 当前档位回测
+        # 全部并发且有缓存，通常 1 秒内完成；先给前端一个即时状态反馈
+        yield f"data: {json.dumps({'status': 'fetching_data'}, ensure_ascii=False)}\n\n"
+
+        rt_text, rt_date, market_context, backtest_summary = "", "", "", None
         fund_code = (data.get("fundCode") or "").strip()
         if fund_code:
             try:
-                rt_ctx = await get_fund_realtime_context(fund_code)
+                rt_ctx = await get_fund_realtime_context(fund_code, nav_days=500)
                 rt_text = format_realtime_context(rt_ctx)
                 rt_date = rt_ctx.get("nav_date", "")
                 if rt_text:
                     logger.info("[SSE AiRecommend] 实时市场数据已获取（净值截至 %s），注入宏观分析", rt_date)
+                # 用当前档位参数跑历史回测（纯计算，毫秒级），验证参数有效性
+                history = rt_ctx.get("history") or []
+                if history and data.get("initialPrincipal"):
+                    backtest_summary = backtest_pyramid_strategy(
+                        history,
+                        initial_principal=data["initialPrincipal"],
+                        tiers=data.get("currentTiers") or DEFAULT_CONFIG["addTiers"],
+                        max_investment=data.get("maxInvestment") or 0,
+                    )
+                market_context = "\n".join(
+                    t for t in (rt_text, format_backtest_summary(backtest_summary)) if t
+                )
             except Exception as e:
-                logger.warning("[SSE AiRecommend] 获取实时市场数据失败（降级为纯 LLM 分析）: %s", e)
+                logger.warning("[SSE AiRecommend] 获取实时市场数据/回测失败（降级为纯 LLM 分析）: %s", e)
 
         # ========== 阶段 1：宏观政策分析（流式） ==========
         logger.info("[SSE AiRecommend] 阶段1: 开始宏观分析")
@@ -821,12 +858,21 @@ async def ai_recommend_tiers_stream(req: "TierRecommendRequest"):
         if macro_error:
             logger.warning("[SSE AiRecommend] 宏观分析流失败: %s", macro_error[0])
 
-        # 解析宏观分析 JSON
+        # 解析宏观分析 JSON（安全解析 → 暴力兜底两级）
         macro_result = None
-        try:
-            full_text = "".join(macro_full_text)
-            if full_text.strip():
+        full_text = "".join(macro_full_text)
+        if full_text.strip():
+            parsed = None
+            try:
                 parsed = _safe_parse_json(full_text)
+            except Exception as e:
+                logger.warning("[SSE AiRecommend] 宏观分析 JSON 安全解析失败: %s，尝试暴力兜底", e)
+                try:
+                    parsed = _brute_parse_json(full_text)
+                except Exception as e2:
+                    logger.warning("[SSE AiRecommend] 宏观分析 JSON 暴力解析也失败: %s，原始文本(前200字): %s",
+                                   e2, full_text[:200])
+            if parsed and parsed.get("sector"):
                 macro_result = {
                     "sector": parsed.get("sector", "未知"),
                     "policyScore": parsed.get("policyScore", 50),
@@ -838,8 +884,6 @@ async def ai_recommend_tiers_stream(req: "TierRecommendRequest"):
                 }
                 logger.info("[SSE AiRecommend] 宏观分析 JSON 解析成功: sector=%s, score=%s",
                             macro_result["sector"], macro_result["policyScore"])
-        except Exception as e:
-            logger.warning("[SSE AiRecommend] 宏观分析 JSON 解析失败: %s", e)
 
         if macro_result is None:
             macro_result = {"error": True, "message": macro_error[0] if macro_error else "宏观分析未返回有效数据"}
@@ -864,6 +908,7 @@ async def ai_recommend_tiers_stream(req: "TierRecommendRequest"):
                     current_market_value=data["currentMarketValue"],
                     hold_days=data.get("holdDays", 0),
                     macro_analysis=macro_result if not macro_result.get("error") else None,
+                    market_context=market_context,
                 ),
                 tier_content_queue,
                 tier_error,
@@ -939,6 +984,10 @@ async def ai_recommend_tiers_stream(req: "TierRecommendRequest"):
                 "error": True,
                 "message": macro_result.get("message", "未知错误") if macro_result else "宏观分析未执行",
             }
+
+        # 附加当前档位参数的回测摘要
+        if backtest_summary:
+            result_data["backtest"] = backtest_summary
 
         logger.info("[SSE AiRecommend] 两阶段流程完成，发送 done + result")
         yield f"data: {json.dumps({'done': True, 'result': result_data}, ensure_ascii=False)}\n\n"
