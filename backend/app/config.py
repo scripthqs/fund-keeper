@@ -37,6 +37,9 @@ class Settings:
     LLM_API_KEY: str = os.getenv("LLM_API_KEY", os.getenv("OPENAI_API_KEY", ""))
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "deepseek-v4-pro")
+    # 快速模型（非推理模型，用于策略推荐/宏观分析/情绪文案等规则明确的场景，速度快 2-3 倍）
+    # 留空则全部场景使用 LLM_MODEL
+    LLM_FAST_MODEL: str = os.getenv("LLM_FAST_MODEL", "")
 
     # 通用密码（可登录任意账号，为空则不启用）
     UNIVERSAL_PASSWORD: str = os.getenv("UNIVERSAL_PASSWORD", "")
@@ -53,6 +56,11 @@ class Settings:
     @property
     def llm_configured(self) -> bool:
         return bool(self.LLM_API_KEY)
+
+    @property
+    def fast_model(self) -> str:
+        """快速模型：配置了 LLM_FAST_MODEL 则用之，否则回退到 LLM_MODEL"""
+        return self.LLM_FAST_MODEL or self.LLM_MODEL
 
 
 settings = Settings()

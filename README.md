@@ -101,6 +101,7 @@ python run.py
 | `LLM_API_KEY`       | AI 模型 API Key（必填）       | —                               |
 | `LLM_BASE_URL`      | LLM API 地址                  | `https://api.deepseek.com`      |
 | `LLM_MODEL`         | 模型名称                      | `deepseek-v4-pro`               |
+| `LLM_FAST_MODEL`    | 快速模型（策略推荐/宏观分析等场景，AI 对话仍用 LLM_MODEL） | 空（与 LLM_MODEL 相同） |
 | `UNIVERSAL_PASSWORD`| 通用密码（可登录任意账号）    | 空（不启用）                    |
 | `HOST`              | 服务监听地址                  | `0.0.0.0`                       |
 | `PORT`              | 服务端口                      | `8000`                          |

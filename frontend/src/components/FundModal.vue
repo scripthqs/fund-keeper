@@ -182,7 +182,7 @@
             >
               <div class="flex items-center gap-2 mb-1">
                 <van-loading
-                  v-if="aiRecommending && phase === 'macro'"
+                  v-if="aiRecommending && !macroDone"
                   size="12"
                   type="spinner"
                   color="#52c41a"
@@ -191,7 +191,7 @@
                   {{
                     fetchingData
                       ? "📈 正在获取行情、估值与回测数据..."
-                      : aiRecommending && phase === "macro"
+                      : aiRecommending && !macroDone
                         ? "📡 宏观政策分析中..."
                         : "📡 宏观政策分析"
                   }}
@@ -207,7 +207,7 @@
               >
                 {{ macroDisplayText || macroStreamText || " "
                 }}<span
-                  v-if="aiRecommending && phase === 'macro' && macroStreamText"
+                  v-if="aiRecommending && !macroDone && macroStreamText"
                   class="inline-block w-1 h-3 ml-0.5 align-middle"
                   style="background: #52c41a; animation: blink 1s infinite"
                 ></span>
@@ -496,6 +496,7 @@ const phase = ref(""); // 当前流式阶段：'macro' | 'tier'
 const macroAnalysis = ref(null);
 const backtestSummary = ref(null); // 当前档位参数的历史回测摘要
 const fetchingData = ref(false); // 正在抓取行情/估值/回测数据（LLM 开始前）
+const macroDone = ref(false); // 宏观分析流是否结束（宏观/策略两路并发，各自独立）
 const strategyStyle = ref("");
 const hasInteracted = ref(false);
 const visible = ref(true);
@@ -759,6 +760,7 @@ watch(
     macroAnalysis.value = null;
     backtestSummary.value = null;
     fetchingData.value = false;
+    macroDone.value = false;
     strategyStyle.value = "";
 
     if (id) {
@@ -826,6 +828,7 @@ async function aiRecommend() {
   macroAnalysis.value = null;
   backtestSummary.value = null;
   fetchingData.value = false;
+  macroDone.value = false;
   phase.value = "macro";
   aiStreamStatus.value = "";
 
@@ -869,12 +872,14 @@ async function aiRecommend() {
         };
         aiStreamStatus.value = statusMap[event.status] || aiStreamStatus.value;
         fetchingData.value = event.status === "fetching_data";
-        // 切换阶段
+        // 策略开始生成：宏观可能仍在流式，两个卡片各自独立播放，不打断宏观
         if (event.status === "generating_strategy") {
-          // 结束宏观打字机
+          phase.value = "tier";
+        }
+        if (event.status === "macro_done") {
+          macroDone.value = true;
           clearTypewriter("macro");
           macroDisplayText.value = macroStreamText.value; // 显示全部
-          phase.value = "tier";
         }
         continue;
       }
@@ -928,6 +933,7 @@ async function aiRecommend() {
         macroAnalysis.value = result.macroAnalysis || null;
         backtestSummary.value = result.backtest || null;
         strategyStyle.value = result.strategyStyle || "";
+        macroDone.value = true;
         // 等待两个打字机完成显示
         clearTypewriter("macro");
         macroDisplayText.value = macroStreamText.value;
@@ -960,7 +966,10 @@ function startTypewriter(name) {
     const src = isMacro ? macroStreamText : aiStreamText;
     const dst = isMacro ? macroDisplayText : aiDisplayText;
     if (dst.value.length < src.value.length) {
-      const next = Math.min(src.value.length, dst.value.length + 2);
+      // 自适应步进：积压越多走得越快，避免大段缓冲内容被打字动画拖住
+      const backlog = src.value.length - dst.value.length;
+      const step = backlog > 200 ? 8 : backlog > 80 ? 4 : 2;
+      const next = Math.min(src.value.length, dst.value.length + step);
       dst.value = src.value.slice(0, next);
     } else {
       clearTypewriter(name);

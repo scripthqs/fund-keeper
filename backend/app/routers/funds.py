@@ -827,13 +827,18 @@ async def ai_recommend_tiers_stream(req: "TierRecommendRequest"):
             except Exception as e:
                 logger.warning("[SSE AiRecommend] 获取实时市场数据/回测失败（降级为纯 LLM 分析）: %s", e)
 
-        # ========== 阶段 1：宏观政策分析（流式） ==========
-        logger.info("[SSE AiRecommend] 阶段1: 开始宏观分析")
+        # ========== 并发启动：宏观分析 + 档位策略同时生成、同时上屏 ==========
+        # 两路流互不等待：策略文字一生成立即推送（不等宏观播完），
+        # 宏观分析在自己的卡片里同步播放，总耗时 = max(宏观, 策略)。
+        logger.info("[SSE AiRecommend] 宏观+策略并发生成")
         yield f"data: {json.dumps({'status': 'macro_analyzing'}, ensure_ascii=False)}\n\n"
 
         macro_content_queue = TQueue()
         macro_full_text = []
         macro_error = []
+        tier_content_queue = TQueue()
+        tier_full_text = []
+        tier_error = []
 
         macro_thread = threading.Thread(
             target=_run_llm_stream_filter,
@@ -841,19 +846,73 @@ async def ai_recommend_tiers_stream(req: "TierRecommendRequest"):
                   macro_error, macro_full_text),
             daemon=True,
         )
+        # 档位策略与宏观分析相互独立（宏观仅作展示卡片，非流式路由同样不传），并发生成
+        tier_thread = threading.Thread(
+            target=_run_llm_stream_filter,
+            args=(
+                recommend_add_tiers_stream(
+                    fund_name=data["fundName"],
+                    total_buy_amount=data["totalBuyAmount"],
+                    initial_principal=data["initialPrincipal"],
+                    max_investment=data["maxInvestment"],
+                    current_return_rate=data["currentReturnRate"],
+                    current_market_value=data["currentMarketValue"],
+                    hold_days=data.get("holdDays", 0),
+                    macro_analysis=None,  # 并发模式不传宏观（与非流式路由行为一致）
+                    market_context=market_context,
+                ),
+                tier_content_queue,
+                tier_error,
+                tier_full_text,
+            ),
+            daemon=True,
+        )
         macro_thread.start()
+        tier_thread.start()
 
-        # 流式输出宏观分析文本
-        while True:
-            chunk = await loop.run_in_executor(None, macro_content_queue.get)
-            if chunk is None:
-                break
-            if chunk == '__REASONING__':
-                yield f"data: {json.dumps({'reasoning': True, 'phase': 'macro'}, ensure_ascii=False)}\n\n"
-            elif chunk.strip():
-                yield f"data: {json.dumps({'macroContent': chunk, 'phase': 'macro'}, ensure_ascii=False)}\n\n"
+        # ---- 两路并发消费：哪路有内容就播哪路，策略分析零排队 ----
+        _DONE = object()
+        bridge_q: asyncio.Queue = asyncio.Queue()
 
+        async def _pump(tq, tag):
+            while True:
+                chunk = await loop.run_in_executor(None, tq.get)
+                if chunk is None:
+                    break
+                await bridge_q.put((tag, chunk))
+            await bridge_q.put((tag, _DONE))
+
+        pump_tasks = [
+            loop.create_task(_pump(macro_content_queue, "macro")),
+            loop.create_task(_pump(tier_content_queue, "tier")),
+        ]
+
+        macro_done = tier_done = tier_started = False
+        while not (macro_done and tier_done):
+            tag, chunk = await bridge_q.get()
+            if tag == "macro":
+                if chunk is _DONE:
+                    macro_done = True
+                    yield f"data: {json.dumps({'status': 'macro_done'}, ensure_ascii=False)}\n\n"
+                elif chunk == '__REASONING__':
+                    yield f"data: {json.dumps({'reasoning': True, 'phase': 'macro'}, ensure_ascii=False)}\n\n"
+                elif chunk.strip():
+                    yield f"data: {json.dumps({'macroContent': chunk, 'phase': 'macro'}, ensure_ascii=False)}\n\n"
+            else:
+                if chunk is _DONE:
+                    tier_done = True
+                    continue
+                if not tier_started:
+                    tier_started = True
+                    yield f"data: {json.dumps({'status': 'generating_strategy'}, ensure_ascii=False)}\n\n"
+                if chunk == '__REASONING__':
+                    yield f"data: {json.dumps({'reasoning': True, 'phase': 'tier'}, ensure_ascii=False)}\n\n"
+                elif chunk.strip():
+                    yield f"data: {json.dumps({'content': chunk, 'phase': 'tier'}, ensure_ascii=False)}\n\n"
+
+        await asyncio.gather(*pump_tasks, return_exceptions=True)
         macro_thread.join(timeout=5)
+        tier_thread.join(timeout=5)
 
         if macro_error:
             logger.warning("[SSE AiRecommend] 宏观分析流失败: %s", macro_error[0])
@@ -887,48 +946,6 @@ async def ai_recommend_tiers_stream(req: "TierRecommendRequest"):
 
         if macro_result is None:
             macro_result = {"error": True, "message": macro_error[0] if macro_error else "宏观分析未返回有效数据"}
-
-        # ========== 阶段 2：加仓策略 + 档位推荐（流式） ==========
-        logger.info("[SSE AiRecommend] 阶段2: 开始策略生成")
-        yield f"data: {json.dumps({'status': 'generating_strategy'}, ensure_ascii=False)}\n\n"
-
-        tier_content_queue = TQueue()
-        tier_full_text = []
-        tier_error = []
-
-        tier_thread = threading.Thread(
-            target=_run_llm_stream_filter,
-            args=(
-                recommend_add_tiers_stream(
-                    fund_name=data["fundName"],
-                    total_buy_amount=data["totalBuyAmount"],
-                    initial_principal=data["initialPrincipal"],
-                    max_investment=data["maxInvestment"],
-                    current_return_rate=data["currentReturnRate"],
-                    current_market_value=data["currentMarketValue"],
-                    hold_days=data.get("holdDays", 0),
-                    macro_analysis=macro_result if not macro_result.get("error") else None,
-                    market_context=market_context,
-                ),
-                tier_content_queue,
-                tier_error,
-                tier_full_text,
-            ),
-            daemon=True,
-        )
-        tier_thread.start()
-
-        # 流式输出策略分析文本
-        while True:
-            chunk = await loop.run_in_executor(None, tier_content_queue.get)
-            if chunk is None:
-                break
-            if chunk == '__REASONING__':
-                yield f"data: {json.dumps({'reasoning': True, 'phase': 'tier'}, ensure_ascii=False)}\n\n"
-            elif chunk.strip():
-                yield f"data: {json.dumps({'content': chunk, 'phase': 'tier'}, ensure_ascii=False)}\n\n"
-
-        tier_thread.join(timeout=5)
 
         if tier_error:
             logger.error("[SSE AiRecommend] 档位推荐失败: %s", tier_error[0])

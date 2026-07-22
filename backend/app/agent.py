@@ -39,14 +39,14 @@ def _get_client():
     return _client
 
 
-def _call_llm_with_retry(messages, temperature=0.3, max_retries=2, max_tokens=1500):
-    """带重试的 LLM 调用，处理临时性 API 故障"""
+def _call_llm_with_retry(messages, temperature=0.3, max_retries=2, max_tokens=1500, model: str = ""):
+    """带重试的 LLM 调用，处理临时性 API 故障。默认使用快速模型（LLM_FAST_MODEL，未配置则回退 LLM_MODEL）"""
     client = _get_client()
     last_error = None
     for attempt in range(max_retries + 1):
         try:
             response = client.chat.completions.create(
-                model=settings.LLM_MODEL,
+                model=model or settings.fast_model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -63,14 +63,15 @@ def _call_llm_with_retry(messages, temperature=0.3, max_retries=2, max_tokens=15
 
 # ==================== 流式 LLM 调用 ====================
 
-def _call_llm_stream(messages, temperature=0.3, max_tokens=2048):
-    """流式调用 LLM，逐块返回内容（生成器）"""
+def _call_llm_stream(messages, temperature=0.3, max_tokens=2048, model: str = ""):
+    """流式调用 LLM，逐块返回内容（生成器）。默认使用快速模型（LLM_FAST_MODEL，未配置则回退 LLM_MODEL）"""
     client = _get_client()
+    use_model = model or settings.fast_model
     for attempt in range(3):
         try:
-            logger.info("流式调用 LLM: model=%s, attempt=%d", settings.LLM_MODEL, attempt + 1)
+            logger.info("流式调用 LLM: model=%s, attempt=%d", use_model, attempt + 1)
             response = client.chat.completions.create(
-                model=settings.LLM_MODEL,
+                model=use_model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -417,7 +418,8 @@ def chat_with_advisor_stream(
             messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": user_message})
 
-    yield from _call_llm_stream(messages, temperature=0.3, max_tokens=2048)
+    # AI 投顾对话是开放式问答，保留推理模型（LLM_MODEL）以获得最佳回答质量
+    yield from _call_llm_stream(messages, temperature=0.3, max_tokens=2048, model=settings.LLM_MODEL)
 
 
 def generate_emotion(
@@ -452,7 +454,7 @@ def generate_emotion(
         ]
 
         response = client.chat.completions.create(
-            model=settings.LLM_MODEL,
+            model=settings.fast_model,
             messages=messages,
         )
         text = response.choices[0].message.content
@@ -591,7 +593,7 @@ def interpret_advice(
         ]
 
         response = client.chat.completions.create(
-            model=settings.LLM_MODEL,
+            model=settings.fast_model,
             messages=messages,
         )
         return response.choices[0].message.content.strip()
@@ -1337,7 +1339,7 @@ def evaluate_operation(
         ]
 
         response = client.chat.completions.create(
-            model=settings.LLM_MODEL,
+            model=settings.fast_model,
             messages=messages,
             temperature=0.5,
         )
