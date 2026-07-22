@@ -435,17 +435,22 @@ async function autoUpdate() {
           const hasDataChange = res.newMarketValue !== res.oldMarketValue || res.todayChange != null
           if (hasDataChange) {
             const s = ensureState(res.fundId)
+            // todayChange 来自 API（准确），todayProfit 由前端基于当前市值和涨跌幅自行计算，
+            // 避免后端用 shares * nav 与 current_market_value 不一致导致错误
+            const localProfit = res.todayChange != null
+              ? calcProfitFromChange(funds.value.find(f => f.id === res.fundId), res.todayChange)
+              : null
             s.previewData = {
               oldMarketValue: res.oldMarketValue,
               newMarketValue: res.newMarketValue,
               todayChange: res.todayChange,
-              todayProfit: res.todayProfit,
+              todayProfit: localProfit,
               calculatedReturnRate: res.calculatedReturnRate,
             }
             s.previewTime = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
             // 同步涨跌幅到输入框供查看
             if (res.todayChange != null) s.todayChange = res.todayChange
-            if (res.todayProfit != null) s.todayProfit = res.todayProfit
+            if (localProfit != null) s.todayProfit = localProfit
             if (res.calculatedReturnRate != null) s.totalReturn = res.calculatedReturnRate
           }
         }
