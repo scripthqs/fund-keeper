@@ -102,6 +102,8 @@ function Deploy-Backend {
     Get-ChildItem -Path "$LOCAL_BASE\backend" -Directory -Recurse -Filter "__pycache__" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     Write-Step "Upload backend code..."
     Send-ToOverseas -LocalPath "$LOCAL_BASE\backend\app\*" -RemoteRelPath "backend/app/"
+    Write-Step "Upload run.py..."
+    Send-ToOverseas -LocalPath "$LOCAL_BASE\backend\run.py" -RemoteRelPath "backend/run.py"
     Write-OK "======== Backend deployed ========"
 }
 
