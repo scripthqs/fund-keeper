@@ -623,21 +623,23 @@ async function autoFetchTodayChange(fund) {
   s.fetchResult = ''
   try {
     const info = await store.queryFund(fund.fundCode)
+    // 优先使用新浪实时估值涨跌幅
     if (info.estimated_change != null) {
       s.todayChange = info.estimated_change
       s.profitManuallySet = false
       const valuationTime = info.update_time || info.date || '--'
-      s.fetchResult = `✅ 获取成功：今日估算涨跌 ${info.estimated_change >= 0 ? '+' : ''}${info.estimated_change}%（估值时间 ${valuationTime}）`
+      s.fetchResult = `✅ 获取成功：实时估算涨跌 ${info.estimated_change >= 0 ? '+' : ''}${info.estimated_change}%（估值时间 ${valuationTime}）`
       onChangeInput(fund.id)
     } else if (info.nav > 0 && fund.fundShares > 0) {
+      // 回退：用最新已结算净值反算涨跌幅
       const newMarket = fund.fundShares * info.nav
       const change = (newMarket - fund.currentMarketValue) / fund.currentMarketValue * 100
       s.todayChange = +change.toFixed(2)
       s.profitManuallySet = false
-      s.fetchResult = `✅ 已根据净值计算：涨幅 ${change >= 0 ? '+' : ''}${change.toFixed(2)}%（净值 ${info.nav}）`
+      s.fetchResult = `✅ 已根据最新净值计算：涨幅 ${change >= 0 ? '+' : ''}${change.toFixed(2)}%（净值 ${info.nav}）`
       onChangeInput(fund.id)
     } else {
-      s.fetchResult = '⚠️ 基金暂未提供实时估算涨跌幅'
+      s.fetchResult = '⚠️ 当前非交易时段，暂无实时估值数据'
     }
   } catch (e) {
     s.fetchResult = '❌ 获取失败: ' + (e.message || '网络错误')

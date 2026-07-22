@@ -135,12 +135,36 @@
               name="maxInvestment"
               label="投入上限 (元)"
               type="number"
-              placeholder="如 50000，留空则不限"
+              placeholder="建议填写，AI推荐更加准确"
             />
             <div v-if="aiExplanation" class="px-3 py-2 text-xs" style="color:var(--text-secondary);line-height:1.5">
               💡 {{ aiExplanation }}
             </div>
-            <!-- 宏观分析展示 -->
+            <!-- 宏观分析流式输出（打字机效果，阶段1） -->
+            <div v-if="(aiRecommending && phase === 'macro') || macroStreamText" class="mx-3 mb-2 p-3 rounded-lg" style="background:linear-gradient(135deg, rgba(82,196,26,.08), rgba(82,196,26,.02)); border:1px solid rgba(82,196,26,.15);">
+              <div class="flex items-center gap-2 mb-1">
+                <van-loading v-if="aiRecommending && phase === 'macro'" size="12" type="spinner" color="#52c41a" />
+                <span class="text-xs font-medium" style="color:#52c41a">
+                  {{ (aiRecommending && phase === 'macro') ? '📡 宏观政策分析中...' : '📡 宏观政策分析' }}
+                </span>
+              </div>
+              <div class="text-xs whitespace-pre-wrap" style="color:var(--text-primary); line-height:1.7; min-height:24px;">
+                {{ macroDisplayText || (macroStreamText || ' ') }}<span v-if="aiRecommending && phase === 'macro' && macroStreamText" class="inline-block w-1 h-3 ml-0.5 align-middle" style="background:#52c41a; animation: blink 1s infinite;"></span>
+              </div>
+            </div>
+            <!-- AI 流式输出策略分析（打字机效果，阶段2） -->
+            <div v-if="(aiRecommending && phase === 'tier') || aiStreamText" class="mx-3 mb-2 p-3 rounded-lg" style="background:linear-gradient(135deg, rgba(139,92,246,.08), rgba(59,130,246,.06)); border:1px solid rgba(139,92,246,.15);">
+              <div class="flex items-center gap-2 mb-1">
+                <van-loading v-if="aiRecommending && phase === 'tier'" size="12" type="spinner" color="#8b5cf6" />
+                <span class="text-xs font-medium" style="color:#8b5cf6">
+                  {{ aiStreamStatus || 'AI 策略分析' }}
+                </span>
+              </div>
+              <div class="text-xs whitespace-pre-wrap" style="color:var(--text-primary); line-height:1.7; min-height:24px;">
+                {{ aiDisplayText || (aiStreamText || ' ') }}<span v-if="aiRecommending && phase === 'tier' && aiStreamText" class="inline-block w-1 h-3 ml-0.5 align-middle" style="background:#8b5cf6; animation: blink 1s infinite;"></span>
+              </div>
+            </div>
+            <!-- 宏观分析结构化数据展示 -->
             <div v-if="macroAnalysis" class="mx-3 mb-2 p-2 rounded-lg text-xs" :style="macroAnalysis.error ? { background: 'rgba(100,100,100,0.06)', border: '1px solid rgba(100,100,100,0.1)' } : macroBgStyle">
               <div v-if="macroAnalysis.error" class="flex items-center gap-1 mb-1 font-medium" style="color:var(--text-secondary)">
                 <span>📡 宏观分析：未启用</span>
@@ -223,6 +247,15 @@ const saving = ref(false)
 const querying = ref(false)
 const aiRecommending = ref(false)
 const aiExplanation = ref('')
+const aiStreamText = ref('')         // 流式接收的策略分析文本（阶段2）
+const aiStreamStatus = ref('')       // 流式状态文案
+const aiDisplayText = ref('')        // 打字机显示的策略文本
+const aiTypewriterRunning = ref(false)
+// 宏观分析流式状态（阶段1）
+const macroStreamText = ref('')      // 流式接收的宏观分析文本
+const macroDisplayText = ref('')     // 打字机显示的宏观文本
+const macroTypewriterRunning = ref(false)
+const phase = ref('')                // 当前流式阶段：'macro' | 'tier'
 const macroAnalysis = ref(null)
 const strategyStyle = ref('')
 const hasInteracted = ref(false)
@@ -366,7 +399,15 @@ async function queryFundInfo() {
     if (form.value.fundShares > 0 && info.nav > 0) {
       form.value.currentMarketValue = +(form.value.fundShares * info.nav).toFixed(2)
     }
-    showTip(`已查询到：${info.name}（净值 ${info.nav}）`)
+    // 展示查询结果（含实时估值）
+    let tipMsg = `已查询到：${info.name}（净值 ${info.nav}`
+    if (info.estimated_nav != null && info.estimated_nav > 0) {
+      const sign = info.estimated_change != null && info.estimated_change >= 0 ? '+' : ''
+      tipMsg += `，估算 ${info.estimated_nav} ${sign}${info.estimated_change ?? '--'}%`
+      if (info.update_time) tipMsg += ` ${info.update_time}`
+    }
+    tipMsg += '）'
+    showTip(tipMsg)
   } catch (e) {
     const errMsg = e.message || '未知错误'
     showError(errMsg)
@@ -378,6 +419,14 @@ async function queryFundInfo() {
 watch(editingFundId, async (id) => {
   formRef.value?.resetValidation()
   aiExplanation.value = ''
+  aiStreamText.value = ''
+  aiDisplayText.value = ''
+  aiTypewriterRunning.value = false
+  macroStreamText.value = ''
+  macroDisplayText.value = ''
+  macroTypewriterRunning.value = false
+  phase.value = ''
+  aiStreamStatus.value = ''
   macroAnalysis.value = null
   strategyStyle.value = ''
 
@@ -415,15 +464,27 @@ async function aiRecommend() {
   }
   aiRecommending.value = true
   aiExplanation.value = ''
+  aiStreamText.value = ''
+  aiDisplayText.value = ''
+  aiTypewriterRunning.value = false
+  macroStreamText.value = ''
+  macroDisplayText.value = ''
+  macroTypewriterRunning.value = false
   macroAnalysis.value = null
-  strategyStyle.value = ''
+  phase.value = 'macro'
+  aiStreamStatus.value = ''
+
+  // 清除旧 timer
+  clearTypewriter('macro')
+  clearTypewriter('tier')
+
   try {
     // 计算持有天数
     const buyMs = new Date(f.buyDate).getTime()
     const nowMs = Date.now()
     const holdDays = buyMs > 0 ? Math.floor((nowMs - buyMs) / 86400000) : 0
 
-    const result = await api.aiRecommendTiers({
+    for await (const event of api.aiRecommendTiersStream({
       fundName: f.name || '待配置基金',
       totalBuyAmount: f.totalBuyAmount || f.initialPrincipal,
       initialPrincipal: f.initialPrincipal,
@@ -431,29 +492,127 @@ async function aiRecommend() {
       currentReturnRate: autoReturnRate.value ?? (f.currentReturnRate || 0),
       currentMarketValue: f.currentMarketValue || f.initialPrincipal,
       holdDays,
-    })
-    if (result.tiers?.length) {
-      form.value.addTiers = result.tiers.map(t => ({ line: t.line, ratio: t.ratio }))
+    })) {
+      if (event.connected) continue
+      if (event.reasoning) {
+        const p = event.phase || phase.value
+        aiStreamStatus.value = p === 'macro' ? '📡 AI 正在思考宏观政策...' : 'AI 正在深度思考策略...'
+        continue
+      }
+      if (event.status) {
+        const statusMap = {
+          macro_analyzing: '📡 正在分析宏观政策环境...',
+          generating_strategy: '📊 正在生成加仓档位策略...',
+        }
+        aiStreamStatus.value = statusMap[event.status] || aiStreamStatus.value
+        // 切换阶段
+        if (event.status === 'generating_strategy') {
+          // 结束宏观打字机
+          clearTypewriter('macro')
+          macroDisplayText.value = macroStreamText.value // 显示全部
+          phase.value = 'tier'
+        }
+        continue
+      }
+      if (event.error) {
+        throw new Error(event.error)
+      }
+
+      // 阶段1：宏观分析文本流
+      if (event.macroContent) {
+        macroStreamText.value += event.macroContent
+        if (!macroTypewriterRunning.value) {
+          startTypewriter('macro')
+        }
+        continue
+      }
+
+      // 阶段2：策略分析文本流
+      if (event.content) {
+        aiStreamText.value += event.content
+        if (!aiTypewriterRunning.value) {
+          startTypewriter('tier')
+        }
+        continue
+      }
+
+      if (event.done && event.result) {
+        const result = event.result
+        if (result.tiers?.length) {
+          form.value.addTiers = result.tiers.map(t => ({ line: t.line, ratio: t.ratio }))
+        }
+        form.value.strategyType = result.strategyType || 'downside'
+        if (result.pullbackTiers?.length) {
+          form.value.pullbackTiers = result.pullbackTiers.map(t => ({ line: t.line, ratio: t.ratio }))
+        } else {
+          form.value.pullbackTiers = []
+        }
+        if (result.stopProfitLine) form.value.stopProfitLine = result.stopProfitLine
+        if (result.stopLossLine) form.value.stopLossLine = result.stopLossLine
+        if (result.stopProfitRatio) form.value.stopProfitRatio = result.stopProfitRatio
+        if (result.stopLossRatio) form.value.stopLossRatio = result.stopLossRatio
+        aiExplanation.value = result.explanation || ''
+        macroAnalysis.value = result.macroAnalysis || null
+        strategyStyle.value = result.strategyStyle || ''
+        // 等待两个打字机完成显示
+        clearTypewriter('macro')
+        macroDisplayText.value = macroStreamText.value
+        await waitForTypewriterDrain('tier')
+        showTip('✅ AI 已结合宏观政策分析推荐完整交易策略')
+        break
+      }
     }
-    form.value.strategyType = result.strategyType || 'downside'
-    if (result.pullbackTiers?.length) {
-      form.value.pullbackTiers = result.pullbackTiers.map(t => ({ line: t.line, ratio: t.ratio }))
-    } else {
-      form.value.pullbackTiers = []
-    }
-    if (result.stopProfitLine) form.value.stopProfitLine = result.stopProfitLine
-    if (result.stopLossLine) form.value.stopLossLine = result.stopLossLine
-    if (result.stopProfitRatio) form.value.stopProfitRatio = result.stopProfitRatio
-    if (result.stopLossRatio) form.value.stopLossRatio = result.stopLossRatio
-    aiExplanation.value = result.explanation || ''
-    macroAnalysis.value = result.macroAnalysis || null
-    strategyStyle.value = result.strategyStyle || ''
-    showTip('✅ AI 已结合宏观政策分析推荐完整交易策略')
   } catch (e) {
     showError('AI 推荐失败: ' + (e.message || '网络错误'))
   } finally {
     aiRecommending.value = false
+    aiStreamStatus.value = ''
+    phase.value = ''
+    clearTypewriter('macro')
+    clearTypewriter('tier')
+    aiTypewriterRunning.value = false
+    macroTypewriterRunning.value = false
   }
+}
+
+// ===== 双打字机 =====
+const typewriterTimers = { macro: null, tier: null }
+function startTypewriter(name) {
+  const isMacro = name === 'macro'
+  if (isMacro) macroTypewriterRunning.value = true
+  else aiTypewriterRunning.value = true
+
+  typewriterTimers[name] = setInterval(() => {
+    const src = isMacro ? macroStreamText : aiStreamText
+    const dst = isMacro ? macroDisplayText : aiDisplayText
+    if (dst.value.length < src.value.length) {
+      const next = Math.min(src.value.length, dst.value.length + 2)
+      dst.value = src.value.slice(0, next)
+    } else {
+      clearTypewriter(name)
+    }
+  }, 30)
+}
+function clearTypewriter(name) {
+  if (typewriterTimers[name]) {
+    clearInterval(typewriterTimers[name])
+    typewriterTimers[name] = null
+  }
+}
+function waitForTypewriterDrain(name) {
+  return new Promise((resolve) => {
+    const isMacro = name === 'macro'
+    const src = isMacro ? macroStreamText : aiStreamText
+    const dst = isMacro ? macroDisplayText : aiDisplayText
+    const check = () => {
+      if (dst.value.length >= src.value.length) {
+        resolve()
+      } else {
+        setTimeout(check, 50)
+      }
+    }
+    check()
+  })
 }
 
 async function closeWithConfirm() {
@@ -514,5 +673,10 @@ async function save() {
 /* van-field error 样式微调 */
 ::deep(.van-field--error .van-field__control) {
   --van-field-control-error-color: #ef4444;
+}
+/* AI 打字机光标闪烁 */
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
 }
 </style>

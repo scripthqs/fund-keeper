@@ -45,7 +45,7 @@ http.interceptors.response.use(
 
     // 网络层错误（无 response，说明请求根本没到达后端）
     if (error.code === 'ECONNABORTED') {
-      return Promise.reject(new Error('请求超时（30秒），天天基金接口响应缓慢，请稍后重试'))
+      return Promise.reject(new Error('请求超时（30秒），基金接口响应缓慢，请稍后重试'))
     }
     if (!error.response) {
       return Promise.reject(new Error('网络连接失败，请检查服务是否正常运行'))
@@ -138,7 +138,7 @@ export const api = {
   updateFund: (id, fund) => http.put('/funds/' + id, fund),
   deleteFund: (id) => http.delete('/funds/' + id),
   executeAction: (data) => http.post('/funds/action', data),
-  // 天天基金 API
+  // 基金查询（新浪实时估值 + 东方财富历史净值）
   queryFund: (code) => http.get('/funds/query-fund', { params: { code } }),
   autoUpdateNav: () => http.post('/funds/auto-update'),
 
@@ -154,12 +154,14 @@ export const api = {
   getHistory: () => http.get('/history'),
   clearHistory: () => http.delete('/history'),
   evaluateHistory: (historyId) => http.post('/history/evaluate/' + historyId),
+  evaluateHistoryStream: (historyId) => fetchSSE('/history/evaluate/stream/' + historyId, {}),
 
   // 撤回
   undoAction: (historyId) => http.post('/funds/undo/' + historyId),
 
   // AI 推荐加仓档位
   aiRecommendTiers: (data) => http.post('/funds/ai-recommend-tiers', data),
+  aiRecommendTiersStream: (data) => fetchSSE('/funds/ai-recommend-tiers/stream', data),
 
   // AI 整体组合分析
   overallAnalysis: (data) => http.post('/funds/overall-analysis', data),
@@ -175,9 +177,11 @@ export const api = {
 
   // 情绪
   generateEmotion: (data) => http.post('/emotion', data),
+  generateEmotionStream: (data) => fetchSSE('/emotion/stream', data),
 
   // AI 解读
   interpretAdvice: (data) => http.post('/advice/interpret', data),
+  interpretAdviceStream: (data) => fetchSSE('/advice/interpret/stream', data),
 
   // 快照
   getSnapshots: (fundId) => http.get('/snapshots/' + fundId),

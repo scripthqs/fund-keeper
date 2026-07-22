@@ -8,7 +8,7 @@ from typing import List
 from fastapi import APIRouter, HTTPException, Depends, Header
 from fastapi.responses import StreamingResponse
 
-from app.agent import chat_with_advisor, chat_with_advisor_stream, generate_emotion, interpret_advice
+from app.agent import chat_with_advisor, chat_with_advisor_stream, generate_emotion, generate_emotion_stream, interpret_advice, interpret_advice_stream
 from app.config import settings
 from app.database import get_db, gen_id, now_str, get_current_user_id
 from app.models import (
@@ -202,6 +202,78 @@ async def emotion(req: EmotionRequest):
         raise HTTPException(status_code=503, detail=str(e))
 
 
+@router.post("/emotion/stream")
+async def emotion_stream(req: EmotionRequest):
+    """生成 AI 情绪文案（流式 SSE）"""
+    if not settings.llm_configured:
+        raise HTTPException(status_code=503, detail="服务端未配置 LLM API Key")
+
+    data = req.model_dump(by_alias=True)
+
+    async def event_stream():
+        import threading
+        from queue import Queue as TQueue
+
+        chunk_queue = TQueue()
+        error_holder = []
+        full_text = []
+
+        def _run():
+            try:
+                for chunk in generate_emotion_stream(
+                    fund_name=data["fundName"],
+                    today_change=data["todayChange"],
+                    total_return=data["totalReturn"],
+                    market_value=data["marketValue"],
+                ):
+                    chunk_queue.put(chunk)
+            except Exception as e:
+                error_holder.append(e)
+            finally:
+                chunk_queue.put(None)
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+
+        logger.info("[SSE Emotion] 发送 connected")
+        yield f"data: {json.dumps({'connected': True}, ensure_ascii=False)}\n\n"
+
+        loop = asyncio.get_running_loop()
+        while True:
+            chunk = await loop.run_in_executor(None, chunk_queue.get)
+            if chunk is None:
+                break
+            if chunk == '__REASONING__':
+                yield f"data: {json.dumps({'reasoning': True}, ensure_ascii=False)}\n\n"
+            else:
+                full_text.append(chunk)
+                yield f"data: {json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
+
+        thread.join(timeout=5)
+
+        if error_holder:
+            logger.error("流式情绪文案生成失败: %s", error_holder[0])
+            yield f"data: {json.dumps({'error': str(error_holder[0])}, ensure_ascii=False)}\n\n"
+            return
+
+        # 从完整文本解析 JSON
+        raw = "".join(full_text).strip()
+        import json as _json
+        try:
+            parsed = _json.loads(raw)
+            result = {"title": parsed.get("title", ""), "lines": parsed.get("lines", [])}
+        except (_json.JSONDecodeError, Exception):
+            lines = [l.strip() for l in raw.split("\n") if l.strip()]
+            result = {"title": lines[0][:15] if lines else "AI 情绪加油站", "lines": lines if lines else []}
+        yield f"data: {_json.dumps({'done': True, 'result': result}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
+
+
 # ==================== AI 操作建议解读 ====================
 
 @router.post("/advice/interpret", response_model=AdviceInterpretResponse)
@@ -225,3 +297,65 @@ async def interpret(req: AdviceInterpretRequest):
         return AdviceInterpretResponse(interpretation=text)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+
+@router.post("/advice/interpret/stream")
+async def interpret_stream(req: AdviceInterpretRequest):
+    """AI 解读规则引擎的操作建议（流式 SSE）"""
+    if not settings.llm_configured:
+        raise HTTPException(status_code=503, detail="服务端未配置 LLM API Key")
+
+    data = req.model_dump(by_alias=True)
+
+    async def event_stream():
+        import threading
+        from queue import Queue as TQueue
+
+        chunk_queue = TQueue()
+        error_holder = []
+
+        def _run():
+            try:
+                for chunk in interpret_advice_stream(
+                    fund_name=data["fundName"],
+                    fund_data=data["fundData"],
+                    rule_result=data["ruleResult"],
+                    warning=data.get("warning"),
+                    config_info=data.get("configInfo"),
+                ):
+                    chunk_queue.put(chunk)
+            except Exception as e:
+                error_holder.append(e)
+            finally:
+                chunk_queue.put(None)
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+
+        logger.info("[SSE AdviceInterpret] 发送 connected")
+        yield f"data: {json.dumps({'connected': True}, ensure_ascii=False)}\n\n"
+
+        loop = asyncio.get_running_loop()
+        while True:
+            chunk = await loop.run_in_executor(None, chunk_queue.get)
+            if chunk is None:
+                break
+            if chunk == '__REASONING__':
+                yield f"data: {json.dumps({'reasoning': True}, ensure_ascii=False)}\n\n"
+            else:
+                yield f"data: {json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
+
+        thread.join(timeout=5)
+
+        if error_holder:
+            logger.error("流式解读建议失败: %s", error_holder[0])
+            yield f"data: {json.dumps({'error': str(error_holder[0])}, ensure_ascii=False)}\n\n"
+            return
+
+        yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )

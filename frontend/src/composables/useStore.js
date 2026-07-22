@@ -109,36 +109,9 @@ async function loadChatAndHealth() {
   }
 }
 
-/** 按 Tab 按需加载数据 */
+/** 按 Tab 按需加载数据（每次进入都会重置对应标志，强制重新请求） */
 async function loadForTab(tabName, showLoading = false) {
-  if (showLoading) loading.value = true
-  try {
-    switch (tabName) {
-      case 'holdings':
-        // 持仓 tab 需要 AI 状态来驱动"心情加油站"
-        await Promise.all([loadFundsAndConfig(), loadSnapshots(), loadChatAndHealth()])
-        break
-      case 'trade':        // 交易 tab 也需要基金列表做选择器
-        await Promise.all([loadFundsAndConfig(), loadHistoryData(), loadChatAndHealth()])
-        break
-      case 'strategy':
-        await Promise.all([loadFundsAndConfig(), loadChatAndHealth()])
-        break
-      case 'mine':
-        await Promise.all([loadFundsAndConfig(), loadHistoryData(), loadChatAndHealth()])
-        break
-    }
-  } catch (e) {
-    console.error('加载数据失败:', e)
-    aiStatus.value.connected = false
-  } finally {
-    if (showLoading) loading.value = false
-  }
-}
-
-/** 下拉刷新：重置当前 Tab 的缓存标志，强制重新请求 */
-async function refreshForTab(tabName) {
-  // 重置该 tab 涉及的数据标志，强制重新拉取最新数据
+  // 每次进入 tab 都重置对应标志，确保拿到最新数据
   switch (tabName) {
     case 'holdings':
       _fundsLoaded.value = false
@@ -165,6 +138,33 @@ async function refreshForTab(tabName) {
       _healthLoaded.value = false
       break
   }
+
+  if (showLoading) loading.value = true
+  try {
+    switch (tabName) {
+      case 'holdings':
+        await Promise.all([loadFundsAndConfig(), loadSnapshots(), loadChatAndHealth()])
+        break
+      case 'trade':
+        await Promise.all([loadFundsAndConfig(), loadHistoryData(), loadChatAndHealth()])
+        break
+      case 'strategy':
+        await Promise.all([loadFundsAndConfig(), loadChatAndHealth()])
+        break
+      case 'mine':
+        await Promise.all([loadFundsAndConfig(), loadHistoryData(), loadChatAndHealth()])
+        break
+    }
+  } catch (e) {
+    console.error('加载数据失败:', e)
+    aiStatus.value.connected = false
+  } finally {
+    if (showLoading) loading.value = false
+  }
+}
+
+/** 下拉刷新：已由 loadForTab 自动重置标志，直接复用即可 */
+async function refreshForTab(tabName) {
   await loadForTab(tabName)
 }
 
@@ -245,11 +245,35 @@ async function saveConfig(d) { Object.assign(config, d); try { await api.updateC
 async function updatePeakReturn(fid, pr) { if (!config.peakReturnRate) config.peakReturnRate = {}; config.peakReturnRate[fid] = pr; api.updatePeakReturn(fid, pr).catch(e => console.error('峰值更新失败:', e)) }
 async function clearHistory() { await api.clearHistory(); history.value = [] }
 
-async function evaluateHistory(historyId) {
-  const r = await api.evaluateHistory(historyId)
+async function evaluateHistory(historyId, onChunk) {
   const h = history.value.find(item => item.id === historyId)
-  if (h) h.aiEvaluation = r.evaluation
-  return r.evaluation
+  if (!h) throw new Error('记录不存在')
+
+  let fullText = ''
+  try {
+    for await (const event of api.evaluateHistoryStream(historyId)) {
+      if (event.connected) continue
+      if (event.reasoning) continue
+      if (event.error) throw new Error(event.error)
+      if (event.done) break
+      if (event.content) {
+        fullText += event.content
+        // 实时更新到UI
+        if (h) {
+          h.aiEvaluation = fullText
+        }
+        if (onChunk) onChunk(event.content, fullText)
+      }
+    }
+  } catch (e) {
+    // 流式调用失败回退到非流式
+    const r = await api.evaluateHistory(historyId)
+    fullText = r.evaluation
+    if (h) h.aiEvaluation = fullText
+  }
+
+  if (h) h.aiEvaluation = fullText
+  return fullText
 }
 
 async function sendChatMessage(message, fundContext) {

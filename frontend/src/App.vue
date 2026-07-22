@@ -120,9 +120,22 @@ function checkLoginState() {
   return false
 }
 
-function onLoginSuccess(info) {
+async function onLoginSuccess(info) {
   userInfo.value = info
   isLoggedIn.value = true
+  await initApp()
+}
+
+async function initApp() {
+  updateTime()
+  await fetchTradingStatus()
+  timer = setInterval(updateTime, 1000)
+  holidayTimer = setInterval(fetchTradingStatus, 3600000)
+  if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    isDark.value = true
+    document.documentElement.classList.add('dark')
+  }
+  await store.loadForTab('holdings', true)
 }
 
 function openFundModal(id) {
@@ -204,19 +217,8 @@ function updateTradingBadge() {
 
 let timer, holidayTimer
 onMounted(async () => {
-  // 检查是否已登录
   if (!checkLoginState()) return
-
-  updateTime()
-  await fetchTradingStatus()
-  timer = setInterval(updateTime, 1000)
-  holidayTimer = setInterval(fetchTradingStatus, 3600000)
-  if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-    isDark.value = true
-    document.documentElement.classList.add('dark')
-  }
-  // 初始只加载默认 Tab（持仓）所需数据
-  await store.loadForTab('holdings', true)
+  await initApp()
 })
 
 // 切换 Tab 时按需加载对应数据

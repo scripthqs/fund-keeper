@@ -1,4 +1,4 @@
-"""基金 CRUD 路由 + 天天基金自动更新"""
+"""基金 CRUD 路由 + 基金数据自动更新"""
 
 import asyncio
 import json
@@ -178,13 +178,13 @@ async def delete_fund(fund_id: str, user_id: str = Depends(_uid)):
     return {"ok": True}
 
 
-# ==================== 天天基金接口 ====================
+# ==================== 基金查询接口 ====================
 
 @router.get("/query-fund", response_model=Optional[FundQueryResponse])
 async def query_fund(code: str = Query(..., min_length=6, max_length=6, description="基金代码")):
     """
-    通过基金代码查询天天基金实时数据
-    返回基金名称、最新净值、实时估值、估算涨跌幅
+    通过基金代码查询实时数据
+    返回基金名称、最新净值、盘中实时估值（新浪财经）、估算涨跌幅
     """
     try:
         info = await query_fund_by_code(code)
@@ -202,8 +202,8 @@ async def query_fund(code: str = Query(..., min_length=6, max_length=6, descript
 async def auto_update_nav(user_id: str = Depends(_uid)):
     """
     一键获取所有基金最新净值/涨跌幅（预览模式）
-    从天天基金拉取最新数据并计算预期市值，不直接写入数据库，
-    由前端展示确认后手动应用
+    从东方财富拉取最新净值、新浪财经获取盘中实时估值，
+    计算预期市值，不直接写入数据库，由前端展示确认后手动应用
     """
     conn = get_db()
     rows = conn.execute(
@@ -254,14 +254,10 @@ async def auto_update_nav(user_id: str = Depends(_uid)):
 
         old_market = fund["current_market_value"]
         shares = fund.get("fund_shares", 0) or 0
-        today_change = info.get("estimated_change")
 
         if shares > 0:
             new_market = round(shares * info["nav"], 2)
             message = f"净值 {info['nav']}，份额 {shares}"
-        elif today_change is not None and old_market > 0:
-            new_market = round(old_market * (1 + today_change / 100), 2)
-            message = f"今日估算涨跌幅 {today_change:+.2f}%"
         else:
             results.append(AutoUpdateResult(
                 fundId=fund["id"],
@@ -270,7 +266,7 @@ async def auto_update_nav(user_id: str = Depends(_uid)):
                 success=False,
                 oldMarketValue=old_market,
                 newMarketValue=old_market,
-                message="缺少份额数据且无法获取涨跌幅，请先填写基金份额",
+                message="缺少份额数据，请先填写基金份额",
             ))
             failed_count += 1
             continue
@@ -285,6 +281,13 @@ async def auto_update_nav(user_id: str = Depends(_uid)):
         else:
             new_return_rate = fund.get("current_return_rate", 0) or 0
 
+        # 计算今日涨跌幅：优先使用实时估值涨跌幅，否则用历史净值反算
+        today_change = info.get("estimated_change")
+        if today_change is None and shares > 0 and info["nav"] > 0 and old_market > 0:
+            # 用最新净值反算涨跌幅（history nav 是已结算的昨日或更早的净值）
+            yesterday_nav = old_market / shares
+            if yesterday_nav > 0:
+                today_change = round((info["nav"] - yesterday_nav) / yesterday_nav * 100, 4)
         # 计算今日收益
         today_profit = round(new_market - old_market, 2)
 
@@ -398,12 +401,10 @@ async def execute_action(req: ExecuteActionRequest, user_id: str = Depends(_uid)
 
         conn.commit()
 
-        # 反序列化 add_tiers 字段（与 list_funds 保持一致）
+        # 反序列化 JSON 字段（与 list_funds 保持一致）
         result = dict(updated)
-        try:
-            result["add_tiers"] = json.loads(result.get("add_tiers", "")) if result.get("add_tiers") else []
-        except (json.JSONDecodeError, TypeError):
-            result["add_tiers"] = []
+        result["add_tiers"] = _parse_tiers(result.get("add_tiers", ""))
+        result["pullback_tiers"] = _parse_tiers(result.get("pullback_tiers", ""))
 
         return {"ok": True, "fund": result, "historyId": history_id}
 
@@ -468,10 +469,8 @@ async def undo_action(history_id: str, user_id: str = Depends(_uid)):
             "SELECT * FROM funds WHERE name = ? AND user_id = ?", (fund_name, user_id)
         ).fetchone()
         result = dict(updated)
-        try:
-            result["add_tiers"] = json.loads(result.get("add_tiers", "")) if result.get("add_tiers") else []
-        except (json.JSONDecodeError, TypeError):
-            result["add_tiers"] = []
+        result["add_tiers"] = _parse_tiers(result.get("add_tiers", ""))
+        result["pullback_tiers"] = _parse_tiers(result.get("pullback_tiers", ""))
         return {"ok": True, "fund": result}
 
     except HTTPException:
@@ -542,6 +541,356 @@ async def ai_recommend_tiers(req: "TierRecommendRequest"):
         return result
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+
+def _run_llm_stream_filter(llm_generator, content_queue, error_holder, full_text_list):
+    """后台线程：消费 LLM 流，将分析文本放入队列，同时累积 JSON 文本。
+
+    分离策略：
+    1. 优先用分隔符 "::JSON::"（Prompt 已要求 LLM 在 JSON 前输出）
+    2. 若 LLM 未输出分隔符，则兜底用 brace 计数从累积文本中提取 JSON
+    """
+    delimiter = "::JSON::"
+    delim_len = len(delimiter)
+    buffer = ""
+    in_json = False
+
+    def _fallback_brace_extract(text: str):
+        """没有分隔符时，从 text 里用 brace 计数抠出 JSON 并放入 full_text_list"""
+        depth = 0
+        in_string = False
+        escaped = False
+        start = -1
+        for i, ch in enumerate(text):
+            if start == -1:
+                if ch == '{':
+                    start = i
+                    depth = 1
+                continue
+            if escaped:
+                escaped = False
+                continue
+            if ch == "\\":
+                escaped = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    full_text_list.append(text[start:i + 1])
+                    return True
+        return False
+
+    try:
+        for chunk in llm_generator:
+            if chunk == '__REASONING__':
+                if buffer:
+                    content_queue.put(buffer)
+                    buffer = ""
+                content_queue.put('__REASONING__')
+                continue
+
+            if in_json:
+                # 分隔符已出现，之后全部视为 JSON
+                full_text_list.append(chunk)
+                continue
+
+            buffer += chunk
+            idx = buffer.find(delimiter)
+            if idx != -1:
+                # 找到分隔符
+                if idx > 0:
+                    content_queue.put(buffer[:idx])
+                full_text_list.append(buffer[idx + delim_len:])
+                buffer = ""
+                in_json = True
+            else:
+                # 还没找到分隔符，把不可能包含部分分隔符的前段安全地 flush 出去
+                # 保留 delim_len - 1 个字符以处理跨 chunk 的分隔符
+                if len(buffer) > delim_len - 1:
+                    safe_flush = len(buffer) - delim_len + 1
+                    content_queue.put(buffer[:safe_flush])
+                    buffer = buffer[safe_flush:]
+    except Exception as e:
+        logger.error("LLM 流式过滤线程异常: %s", e)
+        error_holder.append(e)
+    finally:
+        # 流结束仍未切到 JSON：buffer 里要么是纯文本（没有 JSON），要么混着 JSON
+        if buffer:
+            if not in_json:
+                # 尝试兜底提取 JSON；剩下的作为 content
+                if not _fallback_brace_extract(buffer):
+                    content_queue.put(buffer)
+            else:
+                full_text_list.append(buffer)
+        content_queue.put(None)  # 结束标志
+
+
+def _default_tier_strategy(initial_principal: float, total_buy_amount: float,
+                           max_investment: float, current_return_rate: float) -> dict:
+    """当 AI 返回无法解析时，生成一组合理的默认档位。"""
+    remaining = max(0.0, (max_investment or 0) - (total_buy_amount or 0))
+    if initial_principal <= 0:
+        initial_principal = remaining or 10000
+
+    coverage = remaining / initial_principal if initial_principal > 0 else 0
+
+    # 根据预算覆盖率和盈亏状态确定总比例
+    if current_return_rate > 0:
+        base_total = 0.30
+        strategy_type = "pullback"
+    elif current_return_rate > -10:
+        base_total = 0.40
+        strategy_type = "downside"
+    elif current_return_rate > -25:
+        base_total = 0.55
+        strategy_type = "downside"
+    else:
+        base_total = 0.70
+        strategy_type = "downside"
+
+    # 预算越充裕越激进
+    if coverage >= 10:
+        base_total = min(3.0, base_total * 3)
+    elif coverage >= 5:
+        base_total = min(2.0, base_total * 2)
+    elif coverage >= 2:
+        base_total = min(1.0, base_total * 1.3)
+    elif coverage >= 1:
+        pass
+    elif coverage >= 0.5:
+        base_total *= 0.7
+    else:
+        base_total *= 0.4
+
+    # 生成 4 档金字塔比例
+    total_ratio = base_total * 100  # 转成百分比
+    ratios = [
+        round(total_ratio * 0.15, 1),
+        round(total_ratio * 0.25, 1),
+        round(total_ratio * 0.30, 1),
+        round(total_ratio * 0.30, 1),
+    ]
+
+    # 档位 line
+    if strategy_type == "pullback":
+        lines = [-2, -5, -9, -14]
+    else:
+        lines = [-8, -14, -21, -30]
+
+    tiers = [{"line": lines[i], "ratio": ratios[i]} for i in range(4)]
+
+    return {
+        "strategyType": strategy_type,
+        "tiers": tiers,
+        "pullbackTiers": [],
+        "stopProfitLine": 20,
+        "stopLossLine": -30,
+        "stopProfitRatio": 20,
+        "stopLossRatio": 60,
+        "strategyStyle": "预算平衡型" if coverage >= 1 else "保守防御型",
+        "explanation": "AI 输出解析异常，已根据您的预算和当前收益率生成默认金字塔加仓方案。",
+    }
+
+
+@router.post("/ai-recommend-tiers/stream")
+async def ai_recommend_tiers_stream(req: "TierRecommendRequest"):
+    """AI 智能推荐加仓档位（流式 SSE）
+
+    两阶段串行输出：
+    【阶段1】宏观政策分析（流式打字机）
+    【阶段2】加仓策略 + 档位比例（流式打字机，含 JSON 解析→自动填充表单）
+
+    协议事件：
+    - { connected: true }             – 连接确认
+    - { status: "macro_analyzing" }   – 开始宏观分析
+    - { macroContent: "..." }         – 宏观分析文本（打字机逐字）
+    - { status: "generating_strategy" } – 开始策略生成
+    - { content: "..." }              – 策略分析文本（打字机逐字）
+    - { reasoning: true }             – AI 思考阶段
+    - { phase: "macro"|"tier" }       – 标记当前阶段
+    - { done: true, result: {...}}    – 完成 + 解析结果
+    """
+    from app.config import settings
+    if not settings.llm_configured:
+        raise HTTPException(status_code=503, detail="服务端未配置 LLM API Key")
+
+    from app.agent import recommend_add_tiers_stream, analyze_fund_macro_stream, _safe_parse_json, _brute_parse_json
+    import threading
+    from queue import Queue as TQueue
+
+    data = req.model_dump(by_alias=True)
+    fund_name = data["fundName"]
+
+    async def event_stream():
+        loop = asyncio.get_running_loop()
+
+        logger.info("[SSE AiRecommend] 发送 connected 事件")
+        yield f"data: {json.dumps({'connected': True}, ensure_ascii=False)}\n\n"
+
+        # ========== 阶段 1：宏观政策分析（流式） ==========
+        logger.info("[SSE AiRecommend] 阶段1: 开始宏观分析")
+        yield f"data: {json.dumps({'status': 'macro_analyzing'}, ensure_ascii=False)}\n\n"
+
+        macro_content_queue = TQueue()
+        macro_full_text = []
+        macro_error = []
+
+        macro_thread = threading.Thread(
+            target=_run_llm_stream_filter,
+            args=(analyze_fund_macro_stream(fund_name), macro_content_queue,
+                  macro_error, macro_full_text),
+            daemon=True,
+        )
+        macro_thread.start()
+
+        # 流式输出宏观分析文本
+        while True:
+            chunk = await loop.run_in_executor(None, macro_content_queue.get)
+            if chunk is None:
+                break
+            if chunk == '__REASONING__':
+                yield f"data: {json.dumps({'reasoning': True, 'phase': 'macro'}, ensure_ascii=False)}\n\n"
+            elif chunk.strip():
+                yield f"data: {json.dumps({'macroContent': chunk, 'phase': 'macro'}, ensure_ascii=False)}\n\n"
+
+        macro_thread.join(timeout=5)
+
+        if macro_error:
+            logger.warning("[SSE AiRecommend] 宏观分析流失败: %s", macro_error[0])
+
+        # 解析宏观分析 JSON
+        macro_result = None
+        try:
+            full_text = "".join(macro_full_text)
+            if full_text.strip():
+                parsed = _safe_parse_json(full_text)
+                macro_result = {
+                    "sector": parsed.get("sector", "未知"),
+                    "policyScore": parsed.get("policyScore", 50),
+                    "keyPolicies": parsed.get("keyPolicies", []),
+                    "trend": parsed.get("trend", ""),
+                    "aggressiveness": parsed.get("aggressiveness", 0),
+                    "analysis": parsed.get("analysis", ""),
+                }
+                logger.info("[SSE AiRecommend] 宏观分析 JSON 解析成功: sector=%s, score=%s",
+                            macro_result["sector"], macro_result["policyScore"])
+        except Exception as e:
+            logger.warning("[SSE AiRecommend] 宏观分析 JSON 解析失败: %s", e)
+
+        if macro_result is None:
+            macro_result = {"error": True, "message": macro_error[0] if macro_error else "宏观分析未返回有效数据"}
+
+        # ========== 阶段 2：加仓策略 + 档位推荐（流式） ==========
+        logger.info("[SSE AiRecommend] 阶段2: 开始策略生成")
+        yield f"data: {json.dumps({'status': 'generating_strategy'}, ensure_ascii=False)}\n\n"
+
+        tier_content_queue = TQueue()
+        tier_full_text = []
+        tier_error = []
+
+        tier_thread = threading.Thread(
+            target=_run_llm_stream_filter,
+            args=(
+                recommend_add_tiers_stream(
+                    fund_name=data["fundName"],
+                    total_buy_amount=data["totalBuyAmount"],
+                    initial_principal=data["initialPrincipal"],
+                    max_investment=data["maxInvestment"],
+                    current_return_rate=data["currentReturnRate"],
+                    current_market_value=data["currentMarketValue"],
+                    hold_days=data.get("holdDays", 0),
+                    macro_analysis=macro_result if not macro_result.get("error") else None,
+                ),
+                tier_content_queue,
+                tier_error,
+                tier_full_text,
+            ),
+            daemon=True,
+        )
+        tier_thread.start()
+
+        # 流式输出策略分析文本
+        while True:
+            chunk = await loop.run_in_executor(None, tier_content_queue.get)
+            if chunk is None:
+                break
+            if chunk == '__REASONING__':
+                yield f"data: {json.dumps({'reasoning': True, 'phase': 'tier'}, ensure_ascii=False)}\n\n"
+            elif chunk.strip():
+                yield f"data: {json.dumps({'content': chunk, 'phase': 'tier'}, ensure_ascii=False)}\n\n"
+
+        tier_thread.join(timeout=5)
+
+        if tier_error:
+            logger.error("[SSE AiRecommend] 档位推荐失败: %s", tier_error[0])
+            yield f"data: {json.dumps({'error': str(tier_error[0])}, ensure_ascii=False)}\n\n"
+            return
+
+        # 解析档位推荐 JSON
+        full_text = "".join(tier_full_text)
+        logger.info("[SSE AiRecommend] 流式完成，完整文本长度 %d 字符", len(full_text))
+        tier_result = None
+        try:
+            if full_text.strip():
+                tier_result = _safe_parse_json(full_text)
+        except Exception as e:
+            logger.warning("安全解析 JSON 失败: %s", e)
+
+        if not tier_result or not tier_result.get("tiers"):
+            logger.warning("安全解析未提取到 tiers，尝试暴力兜底")
+            try:
+                tier_result = _brute_parse_json(full_text)
+            except Exception as e:
+                logger.warning("暴力解析 JSON 也失败: %s", e)
+
+        if not tier_result or not tier_result.get("tiers"):
+            logger.error("AI 档位 JSON 无法解析，使用默认档位兜底。原始文本(前200字符): %s", full_text[:200])
+            tier_result = _default_tier_strategy(
+                initial_principal=data["initialPrincipal"],
+                total_buy_amount=data["totalBuyAmount"],
+                max_investment=data["maxInvestment"],
+                current_return_rate=data["currentReturnRate"],
+            )
+            # 给前端一个温和提示，不再阻断流程
+            yield f"data: {json.dumps({'warning': 'AI 推荐数据格式异常，已使用默认档位方案，请检查并手动调整。'}, ensure_ascii=False)}\n\n"
+
+        # 组装最终结果
+        result_data = {
+            "strategyType": tier_result.get("strategyType", "downside"),
+            "tiers": tier_result.get("tiers", []),
+            "pullbackTiers": tier_result.get("pullbackTiers", []),
+            "stopProfitLine": tier_result.get("stopProfitLine", 0),
+            "stopLossLine": tier_result.get("stopLossLine", 0),
+            "stopProfitRatio": tier_result.get("stopProfitRatio", 0),
+            "stopLossRatio": tier_result.get("stopLossRatio", 0),
+            "strategyStyle": tier_result.get("strategyStyle", ""),
+            "explanation": tier_result.get("explanation", ""),
+        }
+
+        # 附加宏观分析结构化数据
+        if macro_result and not macro_result.get("error"):
+            result_data["macroAnalysis"] = macro_result
+        else:
+            result_data["macroAnalysis"] = {
+                "error": True,
+                "message": macro_result.get("message", "未知错误") if macro_result else "宏观分析未执行",
+            }
+
+        logger.info("[SSE AiRecommend] 两阶段流程完成，发送 done + result")
+        yield f"data: {json.dumps({'done': True, 'result': result_data}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
 
 
 @router.post("/overall-analysis", response_model=OverallAnalysisResponse)

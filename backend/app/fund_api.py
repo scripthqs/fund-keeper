@@ -1,7 +1,8 @@
 """
-天天基金 API 服务层
-提供基金信息查询、实时估值、历史净值拉取能力
-（注意：天天基金 fundgz 实时接口已于 2025 年下线，现改用东方财富接口）
+基金 API 服务层
+- 东方财富：基金信息查询、历史净值拉取
+- 新浪财经：盘中实时净值估算（支付宝/蚂蚁财富同款数据源）
+- 天天基金 fundgz 接口已于 2026 年停用，A 股盘中估值改用新浪接口
 """
 
 from __future__ import annotations
@@ -14,10 +15,12 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# 东方财富历史净值接口（需要 Referer）
+# 东方财富历史净值接口（需要 Referer，仅返回已结算净值）
 FUND_HISTORY_URL = "https://api.fund.eastmoney.com/f10/lsjz"
 # 东方财富基金基本信息接口
 FUND_INFO_URL = "http://fund.eastmoney.com/pingzhongdata/{code}.js"
+# 新浪财经基金实时估值接口（支付宝/蚂蚁财富同款数据源，盘中每分钟更新）
+FUND_ESTIMATE_URL = "https://stock.finance.sina.com.cn/fundInfo/api/openapi.php/FdFundService.getEstimateNetworthPic"
 
 # 公共请求头
 HEADERS = {
@@ -65,21 +68,92 @@ class FundQueryError(Exception):
         self.recoverable = recoverable  # 是否可重试
 
 
+async def get_fund_estimate(code: str) -> dict:
+    """
+    从新浪财经获取基金盘中实时估值（支付宝/蚂蚁财富同款数据源）
+
+    天天基金 fundgz.1234567.com.cn 已于 2026 年停用，
+    现改用新浪财经接口获取盘中估值，交易时段每分钟更新。
+
+    Returns:
+        {
+            "estimated_nav": 1.4450,       # 盘中估算净值
+            "estimated_change": 10.64,     # 估算涨跌幅 (%)
+            "estimate_time": "14:35:00",   # 估值时间
+            "estimate_date": "2026-07-22", # 估值日期
+        }
+        非交易时段或无数据时返回 None 值
+    """
+    try:
+        client = _get_client()
+        resp = await client.get(FUND_ESTIMATE_URL, params={"symbol": code})
+        resp.raise_for_status()
+        data = resp.json()
+
+        if data.get("result", {}).get("status", {}).get("code") != 0:
+            logger.warning("新浪估值接口返回异常: %s", data.get("result", {}).get("status"))
+            return {"estimated_nav": None, "estimated_change": None, "estimate_time": "", "estimate_date": ""}
+
+        inner = data.get("result", {}).get("data", {})
+        worth_str = inner.get("worth", "")
+        worth_rate = inner.get("worth_rate")
+        worth_date = inner.get("worth_date", "")  # YYYYMMDD
+
+        # 格式化日期
+        estimate_date = ""
+        if len(worth_date) == 8:
+            estimate_date = f"{worth_date[:4]}-{worth_date[4:6]}-{worth_date[6:8]}"
+
+        if not worth_str:
+            logger.info("基金 %s 当前无实时估值数据（可能非交易时段）", code)
+            return {"estimated_nav": None, "estimated_change": None, "estimate_time": "", "estimate_date": estimate_date}
+
+        estimated_nav = float(worth_str)
+        # worth_rate 是小数形式（如 0.0106 = 1.06%），转为百分比
+        estimated_change = None
+        if worth_rate is not None:
+            try:
+                estimated_change = round(float(worth_rate) * 100, 4)
+            except (ValueError, TypeError):
+                pass
+
+        # 取最新一条分时数据的时间
+        networth_list = inner.get("networth", [])
+        estimate_time = ""
+        if networth_list:
+            estimate_time = networth_list[-1].get("min_time", "")
+
+        logger.info("基金 %s 实时估值: nav=%s change=%s%% time=%s", code, estimated_nav, estimated_change, estimate_time)
+        return {
+            "estimated_nav": estimated_nav,
+            "estimated_change": estimated_change,
+            "estimate_time": estimate_time,
+            "estimate_date": estimate_date,
+        }
+    except Exception as e:
+        logger.warning("获取基金 %s 新浪估值失败: %s", code, e)
+        return {"estimated_nav": None, "estimated_change": None, "estimate_time": "", "estimate_date": ""}
+
+
 async def query_fund_by_code(code: str) -> dict:
     """
-    根据基金代码查询实时信息（名称、净值、估算涨幅等）
+    根据基金代码查询信息（名称、最新净值、实时估值等）
 
-    直接使用东方财富接口（天天基金 fundgz 接口已于 2025 年下线）。
+    数据来源：
+    - 基金名称：东方财富
+    - 最新已结算净值：东方财富历史净值接口
+    - 盘中实时估值：新浪财经（支付宝/蚂蚁财富同款数据源）
 
     Returns:
         {
             "code": "000001",
             "name": "HFT Income Growth Equity A",
-            "date": "2024-01-15",           # 净值日期
-            "nav": 1.2345,                  # 最新单位净值
-            "estimated_nav": 1.2456,        # 实时估算净值
-            "estimated_change": 0.90,       # 估算涨幅 (%)
-            "update_time": "2024-01-15 15:00",
+            "date": "2024-01-15",           # 净值日期（最近已结算日期）
+            "nav": 1.2345,                  # 最新单位净值（已结算）
+            "estimated_nav": 1.4450,        # 盘中估算净值（新浪实时估值）
+            "estimated_change": 10.64,      # 估算涨跌幅 (%)（新浪实时估值）
+            "estimate_suspended": False,    # 估值服务正常
+            "update_time": "14:35:00",      # 估值更新时间
         }
     Raises:
         FundQueryError: 查询失败时抛出，包含详细错误描述
@@ -95,22 +169,30 @@ async def query_fund_by_code(code: str) -> dict:
             recoverable=False,
         )
 
-    # 获取最新净值（东方财富历史净值接口）
     nav = 0.0
     date = ""
-    estimated_nav = None
-    estimated_change = None
+    update_time = ""
+
+    # 获取历史净值（最近已结算净值）
     try:
         history = await get_fund_nav_history(code, page_size=1)
         if history and len(history) > 0:
             nav = history[0]["nav"]
             date = history[0]["date"]
-            # 通过日涨幅反算估算净值
-            daily_pct = float(history[0].get("daily_change", "0") or "0")
-            estimated_nav = round(nav * (1 + daily_pct / 100), 4)
-            estimated_change = daily_pct
+            update_time = date
+            logger.info("基金 %s 历史净值: nav=%s date=%s", code, nav, date)
     except Exception as e:
         logger.warning("获取基金 %s 历史净值失败: %s", code, e)
+
+    # 获取实时估值（新浪财经，支付宝同款数据源）
+    estimate = await get_fund_estimate(code)
+    estimated_nav = estimate.get("estimated_nav")
+    estimated_change = estimate.get("estimated_change")
+    estimate_time = estimate.get("estimate_time", "")
+    if estimate_time and not update_time:
+        update_time = estimate_time
+    elif estimate_time:
+        update_time = estimate_time
 
     return {
         "code": code,
@@ -119,7 +201,8 @@ async def query_fund_by_code(code: str) -> dict:
         "nav": nav,
         "estimated_nav": estimated_nav,
         "estimated_change": estimated_change,
-        "update_time": date,
+        "estimate_suspended": False,
+        "update_time": update_time,
     }
 
 

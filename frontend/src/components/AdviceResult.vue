@@ -135,10 +135,11 @@ async function fetchInterpretation() {
   if (!d) return
   interpretLoading.value = true
   interpretError.value = ''
+  interpretText.value = ''
   try {
     const fund = d.fund
     const config = store.config
-    const r = await api.interpretAdvice({
+    for await (const event of api.interpretAdviceStream({
       fundName: fund.name,
       fundData: {
         marketValue: fund.currentMarketValue,
@@ -164,8 +165,15 @@ async function fetchInterpretation() {
         stopLossLine: config.stopLossLine,
         trailingStop: config.trailingStop,
       },
-    })
-    interpretText.value = r.interpretation
+    })) {
+      if (event.connected) continue
+      if (event.reasoning) continue
+      if (event.error) throw new Error(event.error)
+      if (event.done) break
+      if (event.content) {
+        interpretText.value += event.content
+      }
+    }
   } catch (e) {
     interpretError.value = e.message || 'AI 解读失败'
   } finally {
@@ -178,14 +186,53 @@ async function fetchEmotion(d) {
   emotionLines.value = []
   emotionTitle.value = 'AI 正在生成情绪文案...'
   try {
-    const r = store.aiStatus.value.configured ? await api.generateEmotion({
+    if (!store.aiStatus.value.configured) {
+      emotionTitle.value = '💡 心情加油站'
+      emotionLines.value = ['服务端未配置 API Key，暂无法生成 AI 情绪段子']
+      return
+    }
+    let fullText = ''
+    for await (const event of api.generateEmotionStream({
       fundName: d.fund.name, todayChange: d.todayChange, totalReturn: d.totalReturn,
       marketValue: d.fund.currentMarketValue,
-    }) : { title: '💡 心情加油站', lines: ['服务端未配置 API Key，暂无法生成 AI 情绪段子'] }
-    emotionTitle.value = r.title
-    emotionLines.value = r.lines || []
-  } catch { emotionTitle.value = '😅 AI 暂时不在线'; emotionLines.value = ['AI 情绪生成服务暂时不可用'] }
-  finally { emotionLoading.value = false }
+    })) {
+      if (event.connected) continue
+      if (event.reasoning) continue
+      if (event.error) throw new Error(event.error)
+      if (event.content) {
+        fullText += event.content
+        // 尝试实时解析
+        try {
+          const parsed = JSON.parse(fullText.replace(/^\s+/, '').replace(/\s+$/, ''))
+          if (parsed.title) emotionTitle.value = parsed.title
+          if (parsed.lines) emotionLines.value = parsed.lines
+        } catch { /* JSON 还未完整 */ }
+      }
+      if (event.done) {
+        if (event.result) {
+          emotionTitle.value = event.result.title || emotionTitle.value
+          emotionLines.value = event.result.lines || emotionLines.value
+        } else {
+          // 兜底
+          try {
+            const parsed = JSON.parse(fullText.trim())
+            emotionTitle.value = parsed.title || emotionTitle.value
+            emotionLines.value = parsed.lines || emotionLines.value
+          } catch {
+            const lines = fullText.split('\n').filter(l => l.trim())
+            emotionTitle.value = lines[0]?.slice(0, 15) || 'AI 情绪加油站'
+            emotionLines.value = lines.length ? lines : ['AI 暂时不在线']
+          }
+        }
+        break
+      }
+    }
+  } catch {
+    emotionTitle.value = '😅 AI 暂时不在线'
+    emotionLines.value = ['AI 情绪生成服务暂时不可用']
+  } finally {
+    emotionLoading.value = false
+  }
 }
 
 async function exec() {

@@ -72,7 +72,7 @@ class ConfigUpdate(BaseModel):
     model_config = {"populate_by_name": True}
 
 
-# ==================== 天天基金查询 ====================
+# ==================== 基金查询 ====================
 
 class FundQueryResponse(BaseModel):
     """基金代码查询返回"""
@@ -80,8 +80,9 @@ class FundQueryResponse(BaseModel):
     name: str
     date: str           # 净值日期
     nav: float          # 最新单位净值
-    estimated_nav: Optional[float] = None  # 实时估算净值
-    estimated_change: Optional[float] = None  # 估算涨跌幅 (%)
+    estimated_nav: Optional[float] = None  # 盘中估算净值（新浪财经实时估值，支付宝同款数据源）
+    estimated_change: Optional[float] = None  # 估算涨跌幅 (%)（新浪财经实时估值）
+    estimate_suspended: bool = False  # 估值服务正常可用
     update_time: Optional[str] = None  # 估值更新时间
 
 
