@@ -140,7 +140,7 @@ export const api = {
   executeAction: (data) => http.post('/funds/action', data),
   // 基金查询（新浪实时估值 + 东方财富历史净值）
   queryFund: (code) => http.get('/funds/query-fund', { params: { code } }),
-  autoUpdateNav: () => http.post('/funds/auto-update'),
+  autoUpdateNav: () => http.post('/funds/auto-update', null, { timeout: 120000 }),
 
   // 配置
   getConfig: () => http.get('/config'),

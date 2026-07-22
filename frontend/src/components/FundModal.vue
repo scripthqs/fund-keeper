@@ -8,14 +8,25 @@
     @click-overlay="closeWithConfirm"
   >
     <div class="flex flex-col h-full relative">
-      <div class="flex items-center justify-between p-4 border-b flex-shrink-0" style="border-color:var(--border-color)">
-        <h3 class="font-semibold">{{ editingFundId ? '编辑基金' : '添加基金' }}</h3>
-        <van-button round plain size="small" @click="closeWithConfirm">✕</van-button>
+      <div
+        class="flex items-center justify-between p-4 border-b flex-shrink-0"
+        style="border-color: var(--border-color)"
+      >
+        <h3 class="font-semibold">
+          {{ editingFundId ? "编辑基金" : "添加基金" }}
+        </h3>
+        <van-button round plain size="small" @click="closeWithConfirm"
+          >✕</van-button
+        >
       </div>
       <div class="flex-1 overflow-y-auto" @focusin="markInteracted">
-        <van-form ref="formRef" label-width="7em" label-align="right" @submit="save">
+        <van-form
+          ref="formRef"
+          label-width="7em"
+          label-align="right"
+          @submit="save"
+        >
           <van-cell-group inset>
-
             <!-- 基金代码 + 查询按钮 -->
             <div class="flex items-center gap-1 px-0">
               <van-field
@@ -27,7 +38,7 @@
                 class="flex-1"
                 :rules="[
                   { required: true, message: '请输入基金代码' },
-                  { pattern: /^\d{6}$/, message: '请输入6位基金代码' }
+                  { pattern: /^\d{6}$/, message: '请输入6位基金代码' },
                 ]"
               />
               <van-button
@@ -38,7 +49,8 @@
                 :disabled="!isValidCode"
                 class="shrink-0 mr-3"
                 @click="queryFundInfo"
-              >查询</van-button>
+                >查询</van-button
+              >
             </div>
 
             <van-field
@@ -67,7 +79,7 @@
               placeholder="10000"
               :rules="[
                 { required: true, message: '请输入初始本金' },
-                { validator: (val) => val > 0, message: '金额必须大于0' }
+                { validator: (val) => val > 0, message: '金额必须大于0' },
               ]"
             />
 
@@ -89,7 +101,7 @@
               placeholder="10000"
               :rules="[
                 { required: true, message: '请输入当前市值' },
-                { validator: (val) => val > 0, message: '金额必须大于0' }
+                { validator: (val) => val > 0, message: '金额必须大于0' },
               ]"
             />
 
@@ -102,7 +114,7 @@
               placeholder="10000"
               :rules="[
                 { required: true, message: '请输入累计买入金额' },
-                { validator: (val) => val > 0, message: '金额必须大于0' }
+                { validator: (val) => val > 0, message: '金额必须大于0' },
               ]"
             />
 
@@ -124,368 +136,671 @@
           </van-cell-group>
 
           <!-- ===== 基金独立加仓配置 ===== -->
-          <van-cell-group inset style="margin-top:12px">
+          <van-cell-group inset style="margin-top: 12px">
             <div class="flex items-center justify-between px-3 py-2">
-              <span class="text-sm font-medium" style="color:var(--text-primary)">📊 加仓档位配置</span>
-              <van-button size="mini" round plain type="primary" :loading="aiRecommending" @click="aiRecommend">🤖 AI 推荐</van-button>
+              <span
+                class="text-sm font-medium"
+                style="color: var(--text-primary)"
+                >📊 加仓档位配置</span
+              >
+              <van-button
+                size="mini"
+                round
+                plain
+                type="primary"
+                :loading="aiRecommending"
+                @click="aiRecommend"
+                >🤖 AI 推荐</van-button
+              >
             </div>
-
             <van-field
               v-model.number="form.maxInvestment"
               name="maxInvestment"
-              label="投入上限 (元)"
+              label="预算投入 (元)"
               type="number"
               placeholder="建议填写，AI推荐更加准确"
             />
-            <div v-if="aiExplanation" class="px-3 py-2 text-xs" style="color:var(--text-secondary);line-height:1.5">
+            <div
+              v-if="aiExplanation"
+              class="px-3 py-2 text-xs"
+              style="color: var(--text-secondary); line-height: 1.5"
+            >
               💡 {{ aiExplanation }}
             </div>
             <!-- 宏观分析流式输出（打字机效果，阶段1） -->
-            <div v-if="(aiRecommending && phase === 'macro') || macroStreamText" class="mx-3 mb-2 p-3 rounded-lg" style="background:linear-gradient(135deg, rgba(82,196,26,.08), rgba(82,196,26,.02)); border:1px solid rgba(82,196,26,.15);">
+            <div
+              v-if="(aiRecommending && phase === 'macro') || macroStreamText"
+              class="mx-3 mb-2 p-3 rounded-lg"
+              style="
+                background: linear-gradient(
+                  135deg,
+                  rgba(82, 196, 26, 0.08),
+                  rgba(82, 196, 26, 0.02)
+                );
+                border: 1px solid rgba(82, 196, 26, 0.15);
+              "
+            >
               <div class="flex items-center gap-2 mb-1">
-                <van-loading v-if="aiRecommending && phase === 'macro'" size="12" type="spinner" color="#52c41a" />
-                <span class="text-xs font-medium" style="color:#52c41a">
-                  {{ (aiRecommending && phase === 'macro') ? '📡 宏观政策分析中...' : '📡 宏观政策分析' }}
+                <van-loading
+                  v-if="aiRecommending && phase === 'macro'"
+                  size="12"
+                  type="spinner"
+                  color="#52c41a"
+                />
+                <span class="text-xs font-medium" style="color: #52c41a">
+                  {{
+                    aiRecommending && phase === "macro"
+                      ? "📡 宏观政策分析中..."
+                      : "📡 宏观政策分析"
+                  }}
                 </span>
               </div>
-              <div class="text-xs whitespace-pre-wrap" style="color:var(--text-primary); line-height:1.7; min-height:24px;">
-                {{ macroDisplayText || (macroStreamText || ' ') }}<span v-if="aiRecommending && phase === 'macro' && macroStreamText" class="inline-block w-1 h-3 ml-0.5 align-middle" style="background:#52c41a; animation: blink 1s infinite;"></span>
+              <div
+                class="text-xs whitespace-pre-wrap"
+                style="
+                  color: var(--text-primary);
+                  line-height: 1.7;
+                  min-height: 24px;
+                "
+              >
+                {{ macroDisplayText || macroStreamText || " "
+                }}<span
+                  v-if="aiRecommending && phase === 'macro' && macroStreamText"
+                  class="inline-block w-1 h-3 ml-0.5 align-middle"
+                  style="background: #52c41a; animation: blink 1s infinite"
+                ></span>
               </div>
             </div>
             <!-- AI 流式输出策略分析（打字机效果，阶段2） -->
-            <div v-if="(aiRecommending && phase === 'tier') || aiStreamText" class="mx-3 mb-2 p-3 rounded-lg" style="background:linear-gradient(135deg, rgba(139,92,246,.08), rgba(59,130,246,.06)); border:1px solid rgba(139,92,246,.15);">
+            <div
+              v-if="(aiRecommending && phase === 'tier') || aiStreamText"
+              class="mx-3 mb-2 p-3 rounded-lg"
+              style="
+                background: linear-gradient(
+                  135deg,
+                  rgba(139, 92, 246, 0.08),
+                  rgba(59, 130, 246, 0.06)
+                );
+                border: 1px solid rgba(139, 92, 246, 0.15);
+              "
+            >
               <div class="flex items-center gap-2 mb-1">
-                <van-loading v-if="aiRecommending && phase === 'tier'" size="12" type="spinner" color="#8b5cf6" />
-                <span class="text-xs font-medium" style="color:#8b5cf6">
-                  {{ aiStreamStatus || 'AI 策略分析' }}
+                <van-loading
+                  v-if="aiRecommending && phase === 'tier'"
+                  size="12"
+                  type="spinner"
+                  color="#8b5cf6"
+                />
+                <span class="text-xs font-medium" style="color: #8b5cf6">
+                  {{ aiStreamStatus || "AI 策略分析" }}
                 </span>
               </div>
-              <div class="text-xs whitespace-pre-wrap" style="color:var(--text-primary); line-height:1.7; min-height:24px;">
-                {{ aiDisplayText || (aiStreamText || ' ') }}<span v-if="aiRecommending && phase === 'tier' && aiStreamText" class="inline-block w-1 h-3 ml-0.5 align-middle" style="background:#8b5cf6; animation: blink 1s infinite;"></span>
+              <div
+                class="text-xs whitespace-pre-wrap"
+                style="
+                  color: var(--text-primary);
+                  line-height: 1.7;
+                  min-height: 24px;
+                "
+              >
+                {{ aiDisplayText || aiStreamText || " "
+                }}<span
+                  v-if="aiRecommending && phase === 'tier' && aiStreamText"
+                  class="inline-block w-1 h-3 ml-0.5 align-middle"
+                  style="background: #8b5cf6; animation: blink 1s infinite"
+                ></span>
               </div>
             </div>
             <!-- 宏观分析结构化数据展示 -->
-            <div v-if="macroAnalysis" class="mx-3 mb-2 p-2 rounded-lg text-xs" :style="macroAnalysis.error ? { background: 'rgba(100,100,100,0.06)', border: '1px solid rgba(100,100,100,0.1)' } : macroBgStyle">
-              <div v-if="macroAnalysis.error" class="flex items-center gap-1 mb-1 font-medium" style="color:var(--text-secondary)">
+            <div
+              v-if="macroAnalysis"
+              class="mx-3 mb-2 p-2 rounded-lg text-xs"
+              :style="
+                macroAnalysis.error
+                  ? {
+                      background: 'rgba(100,100,100,0.06)',
+                      border: '1px solid rgba(100,100,100,0.1)',
+                    }
+                  : macroBgStyle
+              "
+            >
+              <div
+                v-if="macroAnalysis.error"
+                class="flex items-center gap-1 mb-1 font-medium"
+                style="color: var(--text-secondary)"
+              >
                 <span>📡 宏观分析：未启用</span>
                 <span :style="strategyStyleTag">{{ strategyLabel }}</span>
               </div>
               <div v-else class="flex items-center gap-1 mb-1 font-medium">
                 <span>📡 宏观分析：{{ macroAnalysis.sector }}</span>
-                <span :style="policyScoreStyle">{{ macroAnalysis.policyScore }}分</span>
+                <span :style="policyScoreStyle"
+                  >{{ macroAnalysis.policyScore }}分</span
+                >
                 <span :style="strategyStyleTag">{{ strategyLabel }}</span>
               </div>
-              <div v-if="macroAnalysis.keyPolicies?.length && !macroAnalysis.error" class="mb-1" style="color:var(--text-secondary)">
-                🏛️ {{ macroAnalysis.keyPolicies.join(' · ') }}
+              <div
+                v-if="macroAnalysis.keyPolicies?.length && !macroAnalysis.error"
+                class="mb-1"
+                style="color: var(--text-secondary)"
+              >
+                🏛️ {{ macroAnalysis.keyPolicies.join(" · ") }}
               </div>
-              <div v-if="!macroAnalysis.error" style="color:var(--text-secondary)">📈 {{ macroAnalysis.trend }}</div>
-              <div class="mt-1" style="color:var(--text-tertiary)">
+              <div
+                v-if="!macroAnalysis.error"
+                style="color: var(--text-secondary)"
+              >
+                📈 {{ macroAnalysis.trend }}
+              </div>
+              <div class="mt-1" style="color: var(--text-tertiary)">
                 {{ macroAnalysis.analysis }}
-                <span v-if="macroAnalysis.error && macroAnalysis.message" class="block mt-1" style="color:#999">原因：{{ macroAnalysis.message }}</span>
+                <span
+                  v-if="macroAnalysis.error && macroAnalysis.message"
+                  class="block mt-1"
+                  style="color: #999"
+                  >原因：{{ macroAnalysis.message }}</span
+                >
               </div>
             </div>
             <div class="tier-grid p-3 flex flex-col gap-2" :key="tierKey">
-              <div v-for="i in form.addTiers.length" :key="i" class="flex items-center gap-2">
-                <van-field v-model.number="form.addTiers[i-1].line" :label="`第${i}档(%)`" type="number" size="small" class="flex-1" />
-                <van-field v-model.number="form.addTiers[i-1].ratio" label="买入(%)" type="number" size="small" class="flex-1" />
+              <div
+                v-for="i in form.addTiers.length"
+                :key="i"
+                class="flex items-center gap-2"
+              >
+                <van-field
+                  v-model.number="form.addTiers[i - 1].line"
+                  :label="`第${i}档(%)`"
+                  type="number"
+                  size="small"
+                  class="flex-1"
+                />
+                <van-field
+                  v-model.number="form.addTiers[i - 1].ratio"
+                  label="买入(%)"
+                  type="number"
+                  size="small"
+                  class="flex-1"
+                />
               </div>
             </div>
 
             <!-- 上涨回调加仓策略 -->
-            <template v-if="form.strategyType === 'pullback' && form.pullbackTiers.length">
+            <template
+              v-if="
+                form.strategyType === 'pullback' && form.pullbackTiers.length
+              "
+            >
               <div class="flex items-center gap-1 px-3 pt-2">
-                <span class="text-sm font-medium" style="color:#fa8c16">📈 上涨回调加仓</span>
-                <span class="text-xs px-1 py-0.5 rounded" style="background:rgba(250,140,22,0.1);color:#fa8c16">牛市策略</span>
+                <span class="text-sm font-medium" style="color: #fa8c16"
+                  >📈 上涨回调加仓</span
+                >
+                <span
+                  class="text-xs px-1 py-0.5 rounded"
+                  style="background: rgba(250, 140, 22, 0.1); color: #fa8c16"
+                  >牛市策略</span
+                >
               </div>
-              <div class="px-3 text-xs" style="color:var(--text-secondary)">
+              <div class="px-3 text-xs" style="color: var(--text-secondary)">
                 在上涨趋势中，每当基金从近期高点回调一定比例时买入，不错过牛市行情
               </div>
-              <div class="tier-grid p-3 flex flex-col gap-2" :key="pullbackTierKey">
-                <div v-for="i in form.pullbackTiers.length" :key="'pb'+i" class="flex items-center gap-2">
-                  <van-field v-model.number="form.pullbackTiers[i-1].line" :label="`回调${i}档(%)`" type="number" size="small" class="flex-1" />
-                  <van-field v-model.number="form.pullbackTiers[i-1].ratio" label="买入(%)" type="number" size="small" class="flex-1" />
+              <div
+                class="tier-grid p-3 flex flex-col gap-2"
+                :key="pullbackTierKey"
+              >
+                <div
+                  v-for="i in form.pullbackTiers.length"
+                  :key="'pb' + i"
+                  class="flex items-center gap-2"
+                >
+                  <van-field
+                    v-model.number="form.pullbackTiers[i - 1].line"
+                    :label="`回调${i}档(%)`"
+                    type="number"
+                    size="small"
+                    class="flex-1"
+                  />
+                  <van-field
+                    v-model.number="form.pullbackTiers[i - 1].ratio"
+                    label="买入(%)"
+                    type="number"
+                    size="small"
+                    class="flex-1"
+                  />
                 </div>
               </div>
             </template>
           </van-cell-group>
 
           <!-- ===== 基金独立止盈止损 ===== -->
-          <van-cell-group inset style="margin-top:12px">
-            <span class="px-3 py-2 text-sm font-medium" style="color:var(--text-primary);display:block">🎯 止盈止损配置</span>
+          <van-cell-group inset style="margin-top: 12px">
+            <span
+              class="px-3 py-2 text-sm font-medium"
+              style="color: var(--text-primary); display: block"
+              >🎯 止盈止损配置</span
+            >
             <div class="tier-grid p-3 grid grid-cols-2 gap-2">
-              <van-field v-model.number="form.stopProfitLine" label="止盈线(%)" type="number" size="small" placeholder="如 25" />
-              <van-field v-model.number="form.stopProfitRatio" label="止盈卖出(%)" type="number" size="small" placeholder="如 20" />
-              <van-field v-model.number="form.stopLossLine" label="止损线(%)" type="number" size="small" placeholder="如 -30" />
-              <van-field v-model.number="form.stopLossRatio" label="止损卖出(%)" type="number" size="small" placeholder="如 60" />
+              <van-field
+                v-model.number="form.stopProfitLine"
+                label="止盈线(%)"
+                type="number"
+                size="small"
+                placeholder="如 25"
+              />
+              <van-field
+                v-model.number="form.stopProfitRatio"
+                label="止盈卖出(%)"
+                type="number"
+                size="small"
+                placeholder="如 20"
+              />
+              <van-field
+                v-model.number="form.stopLossLine"
+                label="止损线(%)"
+                type="number"
+                size="small"
+                placeholder="如 -30"
+              />
+              <van-field
+                v-model.number="form.stopLossRatio"
+                label="止损卖出(%)"
+                type="number"
+                size="small"
+                placeholder="如 60"
+              />
             </div>
-            <div class="px-3 pb-3 text-xs text-right" style="color:var(--text-secondary)">
+            <div
+              class="px-3 pb-3 text-xs text-right"
+              style="color: var(--text-secondary)"
+            >
               填 0 则使用全局配置 | AI 推荐会一并生成
             </div>
           </van-cell-group>
           <div class="flex gap-2 mt-4">
-            <van-button type="primary" round block :loading="saving" loading-text="保存中..." @click="formRef?.submit()">💾 保存</van-button>
-            <van-button round plain block @click="closeWithConfirm">取消</van-button>
+            <van-button
+              type="primary"
+              round
+              block
+              :loading="saving"
+              loading-text="保存中..."
+              @click="formRef?.submit()"
+              >💾 保存</van-button
+            >
+            <van-button round plain block @click="closeWithConfirm"
+              >取消</van-button
+            >
           </div>
         </van-form>
       </div>
     </div>
   </van-popup>
 
-  <van-calendar v-model:show="showCalendar" :min-date="minDate" :max-date="maxDate" @confirm="onDateConfirm" />
+  <van-calendar
+    v-model:show="showCalendar"
+    :min-date="minDate"
+    :max-date="maxDate"
+    @confirm="onDateConfirm"
+  />
 </template>
 
 <script setup>
-import { ref, inject, watch, computed } from 'vue'
-import { showTip, showError, askConfirm } from '../utils/dialog'
-import { round, B } from '../utils/bigMath'
-import { api } from '../api'
+import { ref, inject, watch, computed } from "vue";
+import { showTip, showError, askConfirm } from "../utils/dialog";
+import { round, B } from "../utils/bigMath";
+import { api } from "../api";
 
-const emit = defineEmits(['close'])
-const store = inject('store')
-const editingFundId = inject('editingFundId')
-const saving = ref(false)
-const querying = ref(false)
-const aiRecommending = ref(false)
-const aiExplanation = ref('')
-const aiStreamText = ref('')         // 流式接收的策略分析文本（阶段2）
-const aiStreamStatus = ref('')       // 流式状态文案
-const aiDisplayText = ref('')        // 打字机显示的策略文本
-const aiTypewriterRunning = ref(false)
+const emit = defineEmits(["close"]);
+const store = inject("store");
+const editingFundId = inject("editingFundId");
+const saving = ref(false);
+const querying = ref(false);
+const aiRecommending = ref(false);
+const aiExplanation = ref("");
+const aiStreamText = ref(""); // 流式接收的策略分析文本（阶段2）
+const aiStreamStatus = ref(""); // 流式状态文案
+const aiDisplayText = ref(""); // 打字机显示的策略文本
+const aiTypewriterRunning = ref(false);
 // 宏观分析流式状态（阶段1）
-const macroStreamText = ref('')      // 流式接收的宏观分析文本
-const macroDisplayText = ref('')     // 打字机显示的宏观文本
-const macroTypewriterRunning = ref(false)
-const phase = ref('')                // 当前流式阶段：'macro' | 'tier'
-const macroAnalysis = ref(null)
-const strategyStyle = ref('')
-const hasInteracted = ref(false)
-const visible = ref(true)
-const showCalendar = ref(false)
-const formRef = ref(null)
+const macroStreamText = ref(""); // 流式接收的宏观分析文本
+const macroDisplayText = ref(""); // 打字机显示的宏观文本
+const macroTypewriterRunning = ref(false);
+const phase = ref(""); // 当前流式阶段：'macro' | 'tier'
+const macroAnalysis = ref(null);
+const strategyStyle = ref("");
+const hasInteracted = ref(false);
+const visible = ref(true);
+const showCalendar = ref(false);
+const formRef = ref(null);
 
-const minDate = new Date(2000, 0, 1)
-const maxDate = new Date()
+const minDate = new Date(2000, 0, 1);
+const maxDate = new Date();
 
 const defaultTiers = () => [
   { line: -8, ratio: 5 },
   { line: -12, ratio: 10 },
   { line: -17, ratio: 18 },
   { line: -22, ratio: 28 },
-]
+];
 
 const defaultPullbackTiers = () => [
   { line: -3, ratio: 5 },
   { line: -6, ratio: 10 },
   { line: -10, ratio: 20 },
   { line: -15, ratio: 35 },
-]
+];
 
 // 新建基金默认档位（与默认策略一致，可按需修改）
 
 const form = ref({
-  name: '', fundCode: '', fundShares: 0,
-  initialPrincipal: 0, buyDate: new Date().toISOString().split('T')[0],
-  currentMarketValue: 0, totalBuyAmount: 0, totalSellAmount: 0, currentReturnRate: 0,
-  maxInvestment: 0, addTiers: defaultTiers(),
-  strategyType: 'downside', pullbackTiers: [],
-  stopProfitLine: 0, stopLossLine: 0, stopProfitRatio: 0, stopLossRatio: 0,
-})
+  name: "",
+  fundCode: "",
+  fundShares: 0,
+  initialPrincipal: 0,
+  buyDate: new Date().toISOString().split("T")[0],
+  currentMarketValue: 0,
+  totalBuyAmount: 0,
+  totalSellAmount: 0,
+  currentReturnRate: 0,
+  maxInvestment: undefined,
+  addTiers: defaultTiers(),
+  strategyType: "downside",
+  pullbackTiers: [],
+  stopProfitLine: 0,
+  stopLossLine: 0,
+  stopProfitRatio: 0,
+  stopLossRatio: 0,
+});
 
 /** 编辑模式下表单初始快照，用于检测是否有实际修改 */
-const formSnapshot = ref(null)
+const formSnapshot = ref(null);
 
 const hasFormData = computed(() => {
-  const f = form.value
-  const snap = formSnapshot.value
+  const f = form.value;
+  const snap = formSnapshot.value;
   // 编辑模式：对比快照，检查是否有任何字段被修改
   if (snap) {
     for (const key of Object.keys(snap)) {
-      if (key === 'addTiers' || key === 'pullbackTiers') {
-        const a = f[key] || []
-        const b = snap[key] || []
-        if (a.length !== b.length) return true
-        if (a.some((t, i) => t.line !== b[i].line || t.ratio !== b[i].ratio)) return true
+      if (key === "addTiers" || key === "pullbackTiers") {
+        const a = f[key] || [];
+        const b = snap[key] || [];
+        if (a.length !== b.length) return true;
+        if (a.some((t, i) => t.line !== b[i].line || t.ratio !== b[i].ratio))
+          return true;
       } else if (f[key] !== snap[key]) {
-        return true
+        return true;
       }
     }
-    return false
+    return false;
   }
   // 新增模式：检查是否有任何有效数据
-  return f.name.trim() !== '' || f.initialPrincipal > 0 || f.currentMarketValue > 0 ||
-    f.totalBuyAmount > 0 || f.totalSellAmount > 0 || f.maxInvestment > 0
-})
+  return (
+    f.name.trim() !== "" ||
+    f.initialPrincipal > 0 ||
+    f.currentMarketValue > 0 ||
+    f.totalBuyAmount > 0 ||
+    f.totalSellAmount > 0 ||
+    f.maxInvestment > 0
+  );
+});
 
-const isValidCode = computed(() => /^\d{6}$/.test(form.value.fundCode || ''))
+const isValidCode = computed(() => /^\d{6}$/.test(form.value.fundCode || ""));
 
 /** 档位内容指纹，变化时强制重建整个档位区域 */
-const tierKey = computed(() => (form.value.addTiers || []).map(t => t.line + ',' + t.ratio).join('|'))
+const tierKey = computed(() =>
+  (form.value.addTiers || []).map((t) => t.line + "," + t.ratio).join("|"),
+);
 /** 回调加仓档位内容指纹 */
-const pullbackTierKey = computed(() => (form.value.pullbackTiers || []).map(t => t.line + ',' + t.ratio).join('|'))
+const pullbackTierKey = computed(() =>
+  (form.value.pullbackTiers || []).map((t) => t.line + "," + t.ratio).join("|"),
+);
 
 /** 自动计算总收益率 = (市值 - 累计买入 + 累计卖出) ÷ 累计买入 × 100 */
 const autoReturnRate = computed(() => {
-  const f = form.value
-  if (!f.totalBuyAmount || f.totalBuyAmount <= 0) return null
-  const profit = B(f.currentMarketValue || 0).minus(f.totalBuyAmount).plus(f.totalSellAmount || 0)
-  return round(profit.div(f.totalBuyAmount).times(100))
-})
+  const f = form.value;
+  if (!f.totalBuyAmount || f.totalBuyAmount <= 0) return null;
+  const profit = B(f.currentMarketValue || 0)
+    .minus(f.totalBuyAmount)
+    .plus(f.totalSellAmount || 0);
+  return round(profit.div(f.totalBuyAmount).times(100));
+});
 
 const fmtReturnRate = computed(() => {
-  const r = autoReturnRate.value
-  if (r == null) return '--'
-  return (r >= 0 ? '+' : '') + r.toFixed(2) + '%'
-})
+  const r = autoReturnRate.value;
+  if (r == null) return "--";
+  return (r >= 0 ? "+" : "") + r.toFixed(2) + "%";
+});
 
 /** 自动收益率变化时同步到表单字段，避免 AI 推荐拿到旧值 */
 watch(autoReturnRate, (val) => {
-  if (val != null) form.value.currentReturnRate = val
-})
+  if (val != null) form.value.currentReturnRate = val;
+});
 
 /** 宏观分析背景色 */
 const macroBgStyle = computed(() => {
-  const score = macroAnalysis.value?.policyScore ?? 50
-  if (score >= 80) return { background: 'linear-gradient(135deg, rgba(255,77,79,0.08), rgba(255,77,79,0.02))', border: '1px solid rgba(255,77,79,0.15)' }
-  if (score >= 60) return { background: 'linear-gradient(135deg, rgba(255,170,0,0.08), rgba(255,170,0,0.02))', border: '1px solid rgba(255,170,0,0.15)' }
-  if (score >= 40) return { background: 'linear-gradient(135deg, rgba(100,100,100,0.06), rgba(100,100,100,0.02))', border: '1px solid rgba(100,100,100,0.1)' }
-  return { background: 'linear-gradient(135deg, rgba(0,122,255,0.06), rgba(0,122,255,0.02))', border: '1px solid rgba(0,122,255,0.12)' }
-})
+  const score = macroAnalysis.value?.policyScore ?? 50;
+  if (score >= 80)
+    return {
+      background:
+        "linear-gradient(135deg, rgba(255,77,79,0.08), rgba(255,77,79,0.02))",
+      border: "1px solid rgba(255,77,79,0.15)",
+    };
+  if (score >= 60)
+    return {
+      background:
+        "linear-gradient(135deg, rgba(255,170,0,0.08), rgba(255,170,0,0.02))",
+      border: "1px solid rgba(255,170,0,0.15)",
+    };
+  if (score >= 40)
+    return {
+      background:
+        "linear-gradient(135deg, rgba(100,100,100,0.06), rgba(100,100,100,0.02))",
+      border: "1px solid rgba(100,100,100,0.1)",
+    };
+  return {
+    background:
+      "linear-gradient(135deg, rgba(0,122,255,0.06), rgba(0,122,255,0.02))",
+    border: "1px solid rgba(0,122,255,0.12)",
+  };
+});
 
 /** 政策评分颜色 */
 const policyScoreStyle = computed(() => {
-  const score = macroAnalysis.value?.policyScore ?? 50
-  if (score >= 80) return { color: '#ff4d4f', fontWeight: 'bold' }
-  if (score >= 60) return { color: '#fa8c16', fontWeight: 'bold' }
-  if (score >= 40) return { color: '#666' }
-  return { color: '#1890ff', fontWeight: 'bold' }
-})
+  const score = macroAnalysis.value?.policyScore ?? 50;
+  if (score >= 80) return { color: "#ff4d4f", fontWeight: "bold" };
+  if (score >= 60) return { color: "#fa8c16", fontWeight: "bold" };
+  if (score >= 40) return { color: "#666" };
+  return { color: "#1890ff", fontWeight: "bold" };
+});
 
 /** 策略风格标签 */
 const strategyStyleTag = computed(() => {
-  const style = strategyStyle.value || macroAnalysis.value?.aggressiveness
-  if (typeof style === 'number') {
-    if (style > 0.15) return { color: '#ff4d4f', background: 'rgba(255,77,79,0.1)', padding: '1px 6px', borderRadius: '4px' }
-    if (style < -0.15) return { color: '#1890ff', background: 'rgba(24,144,255,0.1)', padding: '1px 6px', borderRadius: '4px' }
-    return { color: '#666', background: 'rgba(100,100,100,0.08)', padding: '1px 6px', borderRadius: '4px' }
+  const style = strategyStyle.value || macroAnalysis.value?.aggressiveness;
+  if (typeof style === "number") {
+    if (style > 0.15)
+      return {
+        color: "#ff4d4f",
+        background: "rgba(255,77,79,0.1)",
+        padding: "1px 6px",
+        borderRadius: "4px",
+      };
+    if (style < -0.15)
+      return {
+        color: "#1890ff",
+        background: "rgba(24,144,255,0.1)",
+        padding: "1px 6px",
+        borderRadius: "4px",
+      };
+    return {
+      color: "#666",
+      background: "rgba(100,100,100,0.08)",
+      padding: "1px 6px",
+      borderRadius: "4px",
+    };
   }
-  if (style?.includes('激进')) return { color: '#ff4d4f', background: 'rgba(255,77,79,0.1)', padding: '1px 6px', borderRadius: '4px' }
-  if (style?.includes('保守') || style?.includes('防御')) return { color: '#1890ff', background: 'rgba(24,144,255,0.1)', padding: '1px 6px', borderRadius: '4px' }
-  return { color: '#666', background: 'rgba(100,100,100,0.08)', padding: '1px 6px', borderRadius: '4px' }
-})
+  if (style?.includes("激进"))
+    return {
+      color: "#ff4d4f",
+      background: "rgba(255,77,79,0.1)",
+      padding: "1px 6px",
+      borderRadius: "4px",
+    };
+  if (style?.includes("保守") || style?.includes("防御"))
+    return {
+      color: "#1890ff",
+      background: "rgba(24,144,255,0.1)",
+      padding: "1px 6px",
+      borderRadius: "4px",
+    };
+  return {
+    color: "#666",
+    background: "rgba(100,100,100,0.08)",
+    padding: "1px 6px",
+    borderRadius: "4px",
+  };
+});
 
 /** 策略标签文字 */
 const strategyLabel = computed(() => {
-  if (macroAnalysis.value?.error) return 'AI 推荐'
-  return strategyStyle.value || '标准策略'
-})
+  if (macroAnalysis.value?.error) return "AI 推荐";
+  return strategyStyle.value || "标准策略";
+});
 
-function markInteracted() { hasInteracted.value = true }
+function markInteracted() {
+  hasInteracted.value = true;
+}
 
 function onDateConfirm(date) {
-  form.value.buyDate = date.toISOString().split('T')[0]
-  showCalendar.value = false
+  form.value.buyDate = date.toISOString().split("T")[0];
+  showCalendar.value = false;
 }
 
 async function queryFundInfo() {
-  const code = (form.value.fundCode || '').trim()
+  const code = (form.value.fundCode || "").trim();
   if (!/^\d{6}$/.test(code)) {
-    showTip('请输入6位基金代码')
-    return
+    showTip("请输入6位基金代码");
+    return;
   }
-  querying.value = true
+  querying.value = true;
   try {
-    const info = await store.queryFund(code)
-    form.value.name = info.name
+    const info = await store.queryFund(code);
+    form.value.name = info.name;
     if (form.value.fundShares > 0 && info.nav > 0) {
-      form.value.currentMarketValue = +(form.value.fundShares * info.nav).toFixed(2)
+      form.value.currentMarketValue = +(
+        form.value.fundShares * info.nav
+      ).toFixed(2);
     }
     // 展示查询结果（含实时估值）
-    let tipMsg = `已查询到：${info.name}（净值 ${info.nav}`
+    let tipMsg = `已查询到：${info.name}（净值 ${info.nav}`;
     if (info.estimated_nav != null && info.estimated_nav > 0) {
-      const sign = info.estimated_change != null && info.estimated_change >= 0 ? '+' : ''
-      tipMsg += `，估算 ${info.estimated_nav} ${sign}${info.estimated_change ?? '--'}%`
-      if (info.update_time) tipMsg += ` ${info.update_time}`
+      const sign =
+        info.estimated_change != null && info.estimated_change >= 0 ? "+" : "";
+      tipMsg += `，估算 ${info.estimated_nav} ${sign}${info.estimated_change ?? "--"}%`;
+      if (info.update_time) tipMsg += ` ${info.update_time}`;
     }
-    tipMsg += '）'
-    showTip(tipMsg)
+    tipMsg += "）";
+    showTip(tipMsg);
   } catch (e) {
-    const errMsg = e.message || '未知错误'
-    showError(errMsg)
+    const errMsg = e.message || "未知错误";
+    showError(errMsg);
   } finally {
-    querying.value = false
+    querying.value = false;
   }
 }
 
-watch(editingFundId, async (id) => {
-  formRef.value?.resetValidation()
-  aiExplanation.value = ''
-  aiStreamText.value = ''
-  aiDisplayText.value = ''
-  aiTypewriterRunning.value = false
-  macroStreamText.value = ''
-  macroDisplayText.value = ''
-  macroTypewriterRunning.value = false
-  phase.value = ''
-  aiStreamStatus.value = ''
-  macroAnalysis.value = null
-  strategyStyle.value = ''
+watch(
+  editingFundId,
+  async (id) => {
+    formRef.value?.resetValidation();
+    aiExplanation.value = "";
+    aiStreamText.value = "";
+    aiDisplayText.value = "";
+    aiTypewriterRunning.value = false;
+    macroStreamText.value = "";
+    macroDisplayText.value = "";
+    macroTypewriterRunning.value = false;
+    phase.value = "";
+    aiStreamStatus.value = "";
+    macroAnalysis.value = null;
+    strategyStyle.value = "";
 
-  if (id) {
-    const fund = store.funds.value.find(f => f.id === id)
-    if (fund) {
+    if (id) {
+      const fund = store.funds.value.find((f) => f.id === id);
+      if (fund) {
+        Object.assign(form.value, {
+          ...fund,
+          maxInvestment: fund.maxInvestment ?? 0,
+          addTiers: fund.addTiers?.length ? [...fund.addTiers] : defaultTiers(),
+          strategyType: fund.strategyType || "downside",
+          pullbackTiers: fund.pullbackTiers?.length
+            ? [...fund.pullbackTiers]
+            : [],
+          stopProfitLine: fund.stopProfitLine ?? 0,
+          stopLossLine: fund.stopLossLine ?? 0,
+          stopProfitRatio: fund.stopProfitRatio ?? 0,
+          stopLossRatio: fund.stopLossRatio ?? 0,
+        });
+        // 编辑模式：保存初始快照，用于后续检测是否有实际修改
+        formSnapshot.value = JSON.parse(JSON.stringify(form.value));
+      }
+      hasInteracted.value = false;
+    } else {
       Object.assign(form.value, {
-        ...fund,
-        maxInvestment: fund.maxInvestment ?? 0,
-        addTiers: fund.addTiers?.length ? [...fund.addTiers] : defaultTiers(),
-        strategyType: fund.strategyType || 'downside',
-        pullbackTiers: fund.pullbackTiers?.length ? [...fund.pullbackTiers] : [],
-        stopProfitLine: fund.stopProfitLine ?? 0,
-        stopLossLine: fund.stopLossLine ?? 0,
-        stopProfitRatio: fund.stopProfitRatio ?? 0,
-        stopLossRatio: fund.stopLossRatio ?? 0,
-      })
-      // 编辑模式：保存初始快照，用于后续检测是否有实际修改
-      formSnapshot.value = JSON.parse(JSON.stringify(form.value))
+        name: "",
+        fundCode: "",
+        fundShares: 0,
+        initialPrincipal: 0,
+        buyDate: new Date().toISOString().split("T")[0],
+        currentMarketValue: 0,
+        totalBuyAmount: 0,
+        totalSellAmount: 0,
+        currentReturnRate: 0,
+        maxInvestment: undefined,
+        addTiers: defaultTiers(),
+        strategyType: "downside",
+        pullbackTiers: [],
+        stopProfitLine: 0,
+        stopLossLine: 0,
+        stopProfitRatio: 0,
+        stopLossRatio: 0,
+      });
+      // 新增模式：清空快照，使用 hasFormData 的增量检查逻辑
+      formSnapshot.value = null;
+      hasInteracted.value = false;
     }
-    hasInteracted.value = false
-  } else {
-    Object.assign(form.value, { name: '', fundCode: '', fundShares: 0, initialPrincipal: 0, buyDate: new Date().toISOString().split('T')[0], currentMarketValue: 0, totalBuyAmount: 0, totalSellAmount: 0, currentReturnRate: 0, maxInvestment: 0, addTiers: defaultTiers(), strategyType: 'downside', pullbackTiers: [], stopProfitLine: 0, stopLossLine: 0, stopProfitRatio: 0, stopLossRatio: 0 })
-    // 新增模式：清空快照，使用 hasFormData 的增量检查逻辑
-    formSnapshot.value = null
-    hasInteracted.value = false
-  }
-}, { immediate: true })
+  },
+  { immediate: true },
+);
 
 async function aiRecommend() {
-  const f = form.value
+  const f = form.value;
   if (!f.initialPrincipal || f.initialPrincipal <= 0) {
-    showTip('请先填写初始本金')
-    return
+    showTip("请先填写初始本金");
+    return;
   }
-  aiRecommending.value = true
-  aiExplanation.value = ''
-  aiStreamText.value = ''
-  aiDisplayText.value = ''
-  aiTypewriterRunning.value = false
-  macroStreamText.value = ''
-  macroDisplayText.value = ''
-  macroTypewriterRunning.value = false
-  macroAnalysis.value = null
-  phase.value = 'macro'
-  aiStreamStatus.value = ''
+  aiRecommending.value = true;
+  aiExplanation.value = "";
+  aiStreamText.value = "";
+  aiDisplayText.value = "";
+  aiTypewriterRunning.value = false;
+  macroStreamText.value = "";
+  macroDisplayText.value = "";
+  macroTypewriterRunning.value = false;
+  macroAnalysis.value = null;
+  phase.value = "macro";
+  aiStreamStatus.value = "";
 
   // 清除旧 timer
-  clearTypewriter('macro')
-  clearTypewriter('tier')
+  clearTypewriter("macro");
+  clearTypewriter("tier");
 
   try {
     // 计算持有天数
-    const buyMs = new Date(f.buyDate).getTime()
-    const nowMs = Date.now()
-    const holdDays = buyMs > 0 ? Math.floor((nowMs - buyMs) / 86400000) : 0
+    const buyMs = new Date(f.buyDate).getTime();
+    const nowMs = Date.now();
+    const holdDays = buyMs > 0 ? Math.floor((nowMs - buyMs) / 86400000) : 0;
 
     for await (const event of api.aiRecommendTiersStream({
-      fundName: f.name || '待配置基金',
+      fundName: f.name || "待配置基金",
       totalBuyAmount: f.totalBuyAmount || f.initialPrincipal,
       initialPrincipal: f.initialPrincipal,
       maxInvestment: f.maxInvestment || 0,
@@ -493,179 +808,213 @@ async function aiRecommend() {
       currentMarketValue: f.currentMarketValue || f.initialPrincipal,
       holdDays,
     })) {
-      if (event.connected) continue
+      if (event.connected) continue;
       if (event.reasoning) {
-        const p = event.phase || phase.value
-        aiStreamStatus.value = p === 'macro' ? '📡 AI 正在思考宏观政策...' : 'AI 正在深度思考策略...'
-        continue
+        const p = event.phase || phase.value;
+        aiStreamStatus.value =
+          p === "macro"
+            ? "📡 AI 正在思考宏观政策..."
+            : "AI 正在深度思考策略...";
+        continue;
       }
       if (event.status) {
         const statusMap = {
-          macro_analyzing: '📡 正在分析宏观政策环境...',
-          generating_strategy: '📊 正在生成加仓档位策略...',
-        }
-        aiStreamStatus.value = statusMap[event.status] || aiStreamStatus.value
+          macro_analyzing: "📡 正在分析宏观政策环境...",
+          generating_strategy: "📊 正在生成加仓档位策略...",
+        };
+        aiStreamStatus.value = statusMap[event.status] || aiStreamStatus.value;
         // 切换阶段
-        if (event.status === 'generating_strategy') {
+        if (event.status === "generating_strategy") {
           // 结束宏观打字机
-          clearTypewriter('macro')
-          macroDisplayText.value = macroStreamText.value // 显示全部
-          phase.value = 'tier'
+          clearTypewriter("macro");
+          macroDisplayText.value = macroStreamText.value; // 显示全部
+          phase.value = "tier";
         }
-        continue
+        continue;
       }
       if (event.error) {
-        throw new Error(event.error)
+        throw new Error(event.error);
       }
 
       // 阶段1：宏观分析文本流
       if (event.macroContent) {
-        macroStreamText.value += event.macroContent
+        macroStreamText.value += event.macroContent;
         if (!macroTypewriterRunning.value) {
-          startTypewriter('macro')
+          startTypewriter("macro");
         }
-        continue
+        continue;
       }
 
       // 阶段2：策略分析文本流
       if (event.content) {
-        aiStreamText.value += event.content
+        aiStreamText.value += event.content;
         if (!aiTypewriterRunning.value) {
-          startTypewriter('tier')
+          startTypewriter("tier");
         }
-        continue
+        continue;
       }
 
       if (event.done && event.result) {
-        const result = event.result
+        const result = event.result;
         if (result.tiers?.length) {
-          form.value.addTiers = result.tiers.map(t => ({ line: t.line, ratio: t.ratio }))
+          form.value.addTiers = result.tiers.map((t) => ({
+            line: t.line,
+            ratio: t.ratio,
+          }));
         }
-        form.value.strategyType = result.strategyType || 'downside'
+        form.value.strategyType = result.strategyType || "downside";
         if (result.pullbackTiers?.length) {
-          form.value.pullbackTiers = result.pullbackTiers.map(t => ({ line: t.line, ratio: t.ratio }))
+          form.value.pullbackTiers = result.pullbackTiers.map((t) => ({
+            line: t.line,
+            ratio: t.ratio,
+          }));
         } else {
-          form.value.pullbackTiers = []
+          form.value.pullbackTiers = [];
         }
-        if (result.stopProfitLine) form.value.stopProfitLine = result.stopProfitLine
-        if (result.stopLossLine) form.value.stopLossLine = result.stopLossLine
-        if (result.stopProfitRatio) form.value.stopProfitRatio = result.stopProfitRatio
-        if (result.stopLossRatio) form.value.stopLossRatio = result.stopLossRatio
-        aiExplanation.value = result.explanation || ''
-        macroAnalysis.value = result.macroAnalysis || null
-        strategyStyle.value = result.strategyStyle || ''
+        if (result.stopProfitLine)
+          form.value.stopProfitLine = result.stopProfitLine;
+        if (result.stopLossLine) form.value.stopLossLine = result.stopLossLine;
+        if (result.stopProfitRatio)
+          form.value.stopProfitRatio = result.stopProfitRatio;
+        if (result.stopLossRatio)
+          form.value.stopLossRatio = result.stopLossRatio;
+        aiExplanation.value = result.explanation || "";
+        macroAnalysis.value = result.macroAnalysis || null;
+        strategyStyle.value = result.strategyStyle || "";
         // 等待两个打字机完成显示
-        clearTypewriter('macro')
-        macroDisplayText.value = macroStreamText.value
-        await waitForTypewriterDrain('tier')
-        showTip('✅ AI 已结合宏观政策分析推荐完整交易策略')
-        break
+        clearTypewriter("macro");
+        macroDisplayText.value = macroStreamText.value;
+        await waitForTypewriterDrain("tier");
+        showTip("✅ AI 已结合宏观政策分析推荐完整交易策略");
+        break;
       }
     }
   } catch (e) {
-    showError('AI 推荐失败: ' + (e.message || '网络错误'))
+    showError("AI 推荐失败: " + (e.message || "网络错误"));
   } finally {
-    aiRecommending.value = false
-    aiStreamStatus.value = ''
-    phase.value = ''
-    clearTypewriter('macro')
-    clearTypewriter('tier')
-    aiTypewriterRunning.value = false
-    macroTypewriterRunning.value = false
+    aiRecommending.value = false;
+    aiStreamStatus.value = "";
+    phase.value = "";
+    clearTypewriter("macro");
+    clearTypewriter("tier");
+    aiTypewriterRunning.value = false;
+    macroTypewriterRunning.value = false;
   }
 }
 
 // ===== 双打字机 =====
-const typewriterTimers = { macro: null, tier: null }
+const typewriterTimers = { macro: null, tier: null };
 function startTypewriter(name) {
-  const isMacro = name === 'macro'
-  if (isMacro) macroTypewriterRunning.value = true
-  else aiTypewriterRunning.value = true
+  const isMacro = name === "macro";
+  if (isMacro) macroTypewriterRunning.value = true;
+  else aiTypewriterRunning.value = true;
 
   typewriterTimers[name] = setInterval(() => {
-    const src = isMacro ? macroStreamText : aiStreamText
-    const dst = isMacro ? macroDisplayText : aiDisplayText
+    const src = isMacro ? macroStreamText : aiStreamText;
+    const dst = isMacro ? macroDisplayText : aiDisplayText;
     if (dst.value.length < src.value.length) {
-      const next = Math.min(src.value.length, dst.value.length + 2)
-      dst.value = src.value.slice(0, next)
+      const next = Math.min(src.value.length, dst.value.length + 2);
+      dst.value = src.value.slice(0, next);
     } else {
-      clearTypewriter(name)
+      clearTypewriter(name);
     }
-  }, 30)
+  }, 30);
 }
 function clearTypewriter(name) {
   if (typewriterTimers[name]) {
-    clearInterval(typewriterTimers[name])
-    typewriterTimers[name] = null
+    clearInterval(typewriterTimers[name]);
+    typewriterTimers[name] = null;
   }
 }
 function waitForTypewriterDrain(name) {
   return new Promise((resolve) => {
-    const isMacro = name === 'macro'
-    const src = isMacro ? macroStreamText : aiStreamText
-    const dst = isMacro ? macroDisplayText : aiDisplayText
+    const isMacro = name === "macro";
+    const src = isMacro ? macroStreamText : aiStreamText;
+    const dst = isMacro ? macroDisplayText : aiDisplayText;
     const check = () => {
       if (dst.value.length >= src.value.length) {
-        resolve()
+        resolve();
       } else {
-        setTimeout(check, 50)
+        setTimeout(check, 50);
       }
-    }
-    check()
-  })
+    };
+    check();
+  });
 }
 
 async function closeWithConfirm() {
   if (hasFormData.value) {
-    if (!await askConfirm('表单有未保存的数据，确定关闭吗？')) return
+    if (!(await askConfirm("表单有未保存的数据，确定关闭吗？"))) return;
   }
-  formRef.value?.resetValidation()
-  visible.value = false
-  emit('close')
+  formRef.value?.resetValidation();
+  visible.value = false;
+  emit("close");
 }
 
 /** 将空字符串 / NaN 统一转为数字 0，避免 Pydantic 422 */
 function cleanNumeric(val) {
-  if (val === '' || val === null || val === undefined || (typeof val === 'number' && isNaN(val))) return 0
-  return val
+  if (
+    val === "" ||
+    val === null ||
+    val === undefined ||
+    (typeof val === "number" && isNaN(val))
+  )
+    return 0;
+  return val;
 }
 
 async function save() {
-  saving.value = true
+  saving.value = true;
   try {
     // 如果所有档位比例都为 0 或无有效值，视为不使用独立配置
-    const validTiers = (form.value.addTiers || []).filter(t => t.ratio > 0 && t.line < 0)
-    const validPullbackTiers = (form.value.pullbackTiers || []).filter(t => t.ratio > 0 && t.line < 0)
-    const raw = form.value
+    const validTiers = (form.value.addTiers || []).filter(
+      (t) => t.ratio > 0 && t.line < 0,
+    );
+    const validPullbackTiers = (form.value.pullbackTiers || []).filter(
+      (t) => t.ratio > 0 && t.line < 0,
+    );
+    const raw = form.value;
     const data = {
       name: raw.name,
-      fundCode: raw.fundCode || '',
+      fundCode: raw.fundCode || "",
       fundShares: cleanNumeric(raw.fundShares),
       initialPrincipal: cleanNumeric(raw.initialPrincipal),
       buyDate: raw.buyDate,
-      totalBuyAmount: cleanNumeric(raw.totalBuyAmount) || cleanNumeric(raw.initialPrincipal),
+      totalBuyAmount:
+        cleanNumeric(raw.totalBuyAmount) || cleanNumeric(raw.initialPrincipal),
       totalSellAmount: cleanNumeric(raw.totalSellAmount),
-      currentMarketValue: cleanNumeric(raw.currentMarketValue) || cleanNumeric(raw.initialPrincipal),
+      currentMarketValue:
+        cleanNumeric(raw.currentMarketValue) ||
+        cleanNumeric(raw.initialPrincipal),
       currentReturnRate: 0,
       maxInvestment: cleanNumeric(raw.maxInvestment),
       addTiers: validTiers,
-      strategyType: raw.strategyType || 'downside',
+      strategyType: raw.strategyType || "downside",
       pullbackTiers: validPullbackTiers,
       stopProfitLine: cleanNumeric(raw.stopProfitLine),
       stopLossLine: cleanNumeric(raw.stopLossLine),
       stopProfitRatio: cleanNumeric(raw.stopProfitRatio),
       stopLossRatio: cleanNumeric(raw.stopLossRatio),
-    }
+    };
     // 自动计算总收益率
-    const profit = B(data.currentMarketValue || 0).minus(data.totalBuyAmount).plus(data.totalSellAmount || 0)
-    data.currentReturnRate = data.totalBuyAmount > 0 ? round(profit.div(data.totalBuyAmount).times(100)) : 0
-    if (editingFundId.value) await store.updateFund(editingFundId.value, data)
-    else await store.createFund(data)
-    hasInteracted.value = false
-    formRef.value?.resetValidation()
-    visible.value = false
-    emit('close')
-  } catch (e) { showError('保存失败: ' + e.message) } finally { saving.value = false }
+    const profit = B(data.currentMarketValue || 0)
+      .minus(data.totalBuyAmount)
+      .plus(data.totalSellAmount || 0);
+    data.currentReturnRate =
+      data.totalBuyAmount > 0
+        ? round(profit.div(data.totalBuyAmount).times(100))
+        : 0;
+    if (editingFundId.value) await store.updateFund(editingFundId.value, data);
+    else await store.createFund(data);
+    hasInteracted.value = false;
+    formRef.value?.resetValidation();
+    visible.value = false;
+    emit("close");
+  } catch (e) {
+    showError("保存失败: " + e.message);
+  } finally {
+    saving.value = false;
+  }
 }
 </script>
 
@@ -676,7 +1025,13 @@ async function save() {
 }
 /* AI 打字机光标闪烁 */
 @keyframes blink {
-  0%, 50% { opacity: 1; }
-  51%, 100% { opacity: 0; }
+  0%,
+  50% {
+    opacity: 1;
+  }
+  51%,
+  100% {
+    opacity: 0;
+  }
 }
 </style>

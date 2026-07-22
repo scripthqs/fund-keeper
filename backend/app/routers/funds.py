@@ -212,64 +212,50 @@ async def auto_update_nav(user_id: str = Depends(_uid)):
     ).fetchall()
     conn.close()
 
-    results: list[AutoUpdateResult] = []
-    updated_count = 0
-    failed_count = 0
-    skipped_count = 0
-
-    for row in rows:
-        fund = dict(row)
+    async def _update_one(fund: dict) -> AutoUpdateResult:
+        """处理单只基金的净值更新（用于并发执行）"""
         code = fund.get("fund_code", "").strip()
         if not code:
-            skipped_count += 1
-            continue
+            return AutoUpdateResult(
+                fundId=fund["id"], fundName=fund["name"], fundCode="",
+                success=False, oldMarketValue=fund["current_market_value"],
+                newMarketValue=fund["current_market_value"],
+                message="缺少基金代码",
+            )
 
         try:
             info = await query_fund_by_code(code)
         except FundQueryError:
-            results.append(AutoUpdateResult(
-                fundId=fund["id"],
-                fundName=fund["name"],
-                fundCode=code,
+            return AutoUpdateResult(
+                fundId=fund["id"], fundName=fund["name"], fundCode=code,
                 success=False,
                 oldMarketValue=fund["current_market_value"],
                 newMarketValue=fund["current_market_value"],
                 message="获取基金实时数据失败",
-            ))
-            failed_count += 1
-            continue
+            )
 
         if info["nav"] <= 0:
-            results.append(AutoUpdateResult(
-                fundId=fund["id"],
-                fundName=fund["name"],
-                fundCode=code,
+            return AutoUpdateResult(
+                fundId=fund["id"], fundName=fund["name"], fundCode=code,
                 success=False,
                 oldMarketValue=fund["current_market_value"],
                 newMarketValue=fund["current_market_value"],
                 message="获取基金实时数据失败",
-            ))
-            failed_count += 1
-            continue
+            )
 
         old_market = fund["current_market_value"]
         shares = fund.get("fund_shares", 0) or 0
 
-        if shares > 0:
-            new_market = round(shares * info["nav"], 2)
-            message = f"净值 {info['nav']}，份额 {shares}"
-        else:
-            results.append(AutoUpdateResult(
-                fundId=fund["id"],
-                fundName=fund["name"],
-                fundCode=code,
-                success=False,
-                oldMarketValue=old_market,
+        if shares <= 0:
+            return AutoUpdateResult(
+                fundId=fund["id"], fundName=fund["name"], fundCode=code,
+                success=False, oldMarketValue=old_market,
                 newMarketValue=old_market,
                 message="缺少份额数据，请先填写基金份额",
-            ))
-            failed_count += 1
-            continue
+            )
+
+        new_market = round(shares * info["nav"], 2)
+        message = f"净值 {info['nav']}，份额 {shares}"
 
         # 计算预期收益率（不写数据库）
         total_buy = fund.get("total_buy_amount", 0) or 0
@@ -284,26 +270,39 @@ async def auto_update_nav(user_id: str = Depends(_uid)):
         # 计算今日涨跌幅：优先使用实时估值涨跌幅，否则用历史净值反算
         today_change = info.get("estimated_change")
         if today_change is None and shares > 0 and info["nav"] > 0 and old_market > 0:
-            # 用最新净值反算涨跌幅（history nav 是已结算的昨日或更早的净值）
             yesterday_nav = old_market / shares
             if yesterday_nav > 0:
                 today_change = round((info["nav"] - yesterday_nav) / yesterday_nav * 100, 4)
-        # 计算今日收益
         today_profit = round(new_market - old_market, 2)
 
-        results.append(AutoUpdateResult(
-            fundId=fund["id"],
-            fundName=fund["name"],
-            fundCode=code,
+        return AutoUpdateResult(
+            fundId=fund["id"], fundName=fund["name"], fundCode=code,
             success=True,
-            oldMarketValue=old_market,
-            newMarketValue=new_market,
-            todayChange=today_change,
-            todayProfit=today_profit,
-            calculatedReturnRate=new_return_rate,
-            message=message,
-        ))
-        updated_count += 1
+            oldMarketValue=old_market, newMarketValue=new_market,
+            todayChange=today_change, todayProfit=today_profit,
+            calculatedReturnRate=new_return_rate, message=message,
+        )
+
+    # 并发查询所有基金（带超时兜底：单只最长 40s，整体 60s）
+    tasks = [asyncio.wait_for(_update_one(dict(row)), timeout=40) for row in rows]
+    gathered = await asyncio.gather(*tasks, return_exceptions=True)
+
+    results: list[AutoUpdateResult] = []
+    updated_count = 0
+    failed_count = 0
+    skipped_count = 0
+
+    for item in gathered:
+        if isinstance(item, Exception):
+            # 整体超时或其他异常时，记录为未知失败
+            skipped_count += 1
+            continue
+        result: AutoUpdateResult = item
+        results.append(result)
+        if result.success:
+            updated_count += 1
+        else:
+            failed_count += 1
 
     return AutoUpdateResponse(
         updatedCount=updated_count,
