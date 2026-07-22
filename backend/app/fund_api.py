@@ -664,6 +664,7 @@ async def get_index_pe_percentile(index_code: str, index_name: str, years: int =
         resp = await _safe_https_request(
             "GET", CSINDEX_PERF_URL,
             params={"indexCode": index_code, "startDate": start, "endDate": end},
+            timeout=httpx.Timeout(8.0, connect=5.0),  # 估值是辅助数据，慢源快速失败不阻塞主流程
         )
         resp.raise_for_status()
         rows = (resp.json() or {}).get("data") or []

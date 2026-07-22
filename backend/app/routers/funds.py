@@ -535,7 +535,14 @@ async def ai_recommend_tiers(req: "TierRecommendRequest"):
         fund_code = (data.get("fundCode") or "").strip()
         if fund_code:
             try:
-                rt_ctx = await get_fund_realtime_context(fund_code, nav_days=500)
+                # 数据获取总预算 8 秒：慢网/海外服务器下宁可缺数据也不阻塞 LLM 阶段
+                try:
+                    rt_ctx = await asyncio.wait_for(
+                        get_fund_realtime_context(fund_code, nav_days=500), timeout=8.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("实时数据获取超时（8s），降级为纯 LLM 分析")
+                    rt_ctx = {}
                 rt_text = format_realtime_context(rt_ctx)
                 rt_date = rt_ctx.get("nav_date", "")
                 # 用当前档位参数跑历史回测（纯计算，毫秒级），验证参数有效性
@@ -807,7 +814,14 @@ async def ai_recommend_tiers_stream(req: "TierRecommendRequest"):
         fund_code = (data.get("fundCode") or "").strip()
         if fund_code:
             try:
-                rt_ctx = await get_fund_realtime_context(fund_code, nav_days=500)
+                # 数据获取总预算 8 秒：慢网/海外服务器下宁可缺数据也不阻塞 LLM 阶段
+                try:
+                    rt_ctx = await asyncio.wait_for(
+                        get_fund_realtime_context(fund_code, nav_days=500), timeout=8.0
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("[SSE AiRecommend] 实时数据获取超时（8s），降级为纯 LLM 分析")
+                    rt_ctx = {}
                 rt_text = format_realtime_context(rt_ctx)
                 rt_date = rt_ctx.get("nav_date", "")
                 if rt_text:
