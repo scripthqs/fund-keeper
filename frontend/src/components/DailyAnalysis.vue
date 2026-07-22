@@ -207,6 +207,9 @@
         <span v-if="updateResult.updatedCount > 0">✅ {{ updateResult.updatedCount }} 只基金获取成功，展开查看预览</span>
         <span v-if="updateResult.failedCount > 0" class="ml-2" style="color:#ff9800">⚠️ {{ updateResult.failedCount }} 只失败</span>
         <span v-if="updateResult.updatedCount === 0 && updateResult.failedCount === 0 && updateResult.skippedCount > 0" style="color:var(--text-secondary)">无基金代码，请先编辑基金添加代码</span>
+        <div v-if="updateSummary" class="mt-1 pt-1 font-semibold border-t" style="border-color:rgba(128,128,128,0.15)" :class="updateSummary.totalProfit >= 0 ? 'text-red-500' : 'text-green-500'">
+          📊 今日总收益 {{ fmtSigned(updateSummary.totalProfit) }} 元（{{ fmtSigned(updateSummary.totalRate) }}%）
+        </div>
       </div>
 
 
@@ -215,7 +218,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, inject, watch, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, inject, watch, onBeforeUnmount } from 'vue'
 import { fmtNum, fmtSigned, daysBetween } from '../utils/helpers'
 import { showTip, askConfirm, showError } from '../utils/dialog'
 import { analyzeFundEnhanced, evaluateWarning, calcSafetyCushion, calcRecoveryNeeded } from '../utils/engine'
@@ -362,6 +365,30 @@ async function del(id) {
 // ---- 一键更新净值（预览模式） ----
 const updatingNav = ref(false)
 const updateResult = ref(null)
+
+/** 一键更新结果汇总：今日总收益 & 总体收益率（基于各基金当前市值与涨跌幅加权） */
+const updateSummary = computed(() => {
+  const r = updateResult.value
+  if (!r || !r.results) return null
+  let totalProfit = B(0)
+  let totalYesterday = B(0)
+  let hasData = false
+  for (const res of r.results) {
+    if (!res.success || res.todayChange == null || isNaN(res.todayChange)) continue
+    const fund = funds.value.find(f => f.id === res.fundId)
+    if (!fund || fund.currentMarketValue <= 0) continue
+    const profit = calcProfitFromChange(fund, res.todayChange)
+    if (profit == null) continue
+    const denom = B(100).plus(res.todayChange)
+    if (toNum(denom) <= 0) continue
+    totalProfit = totalProfit.plus(profit)
+    totalYesterday = totalYesterday.plus(B(fund.currentMarketValue).times(100).div(denom))
+    hasData = true
+  }
+  if (!hasData) return null
+  const totalRate = toNum(totalYesterday) > 0 ? round(totalProfit.div(totalYesterday).times(100), 2) : 0
+  return { totalProfit: round(totalProfit), totalRate }
+})
 const overallAnalyzing = ref(false)
 const overallAnalysisResult = ref('')
 const overallAnalysisTime = ref('')
