@@ -431,25 +431,28 @@ async function autoUpdate() {
     // 将计算结果存入 fundStates 作为预览数据
     if (r.results) {
       for (const res of r.results) {
-        if (res.success && res.newMarketValue !== res.oldMarketValue) {
-          const s = ensureState(res.fundId)
-          s.previewData = {
-            oldMarketValue: res.oldMarketValue,
-            newMarketValue: res.newMarketValue,
-            todayChange: res.todayChange,
-            todayProfit: res.todayProfit,
-            calculatedReturnRate: res.calculatedReturnRate,
+        if (res.success) {
+          const hasDataChange = res.newMarketValue !== res.oldMarketValue || res.todayChange != null
+          if (hasDataChange) {
+            const s = ensureState(res.fundId)
+            s.previewData = {
+              oldMarketValue: res.oldMarketValue,
+              newMarketValue: res.newMarketValue,
+              todayChange: res.todayChange,
+              todayProfit: res.todayProfit,
+              calculatedReturnRate: res.calculatedReturnRate,
+            }
+            s.previewTime = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+            // 同步涨跌幅到输入框供查看
+            if (res.todayChange != null) s.todayChange = res.todayChange
+            if (res.todayProfit != null) s.todayProfit = res.todayProfit
+            if (res.calculatedReturnRate != null) s.totalReturn = res.calculatedReturnRate
           }
-          s.previewTime = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-          // 同步涨跌幅到输入框供查看
-          if (res.todayChange != null) s.todayChange = res.todayChange
-          if (res.todayProfit != null) s.todayProfit = res.todayProfit
-          if (res.calculatedReturnRate != null) s.totalReturn = res.calculatedReturnRate
         }
       }
     }
     // 自动触发 AI 整体组合分析
-    if (r.results && r.results.some(res => res.success && res.newMarketValue !== res.oldMarketValue)) {
+    if (r.results && r.results.some(res => res.success)) {
       runOverallAnalysis()
     }
   } catch (e) {

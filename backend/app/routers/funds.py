@@ -246,12 +246,18 @@ async def auto_update_nav(user_id: str = Depends(_uid)):
         old_market = fund["current_market_value"]
         shares = fund.get("fund_shares", 0) or 0
 
+        # 今日涨跌幅：优先使用新浪实时估值涨跌幅
+        today_change = info.get("estimated_change")
+
         if shares <= 0:
+            # 无份额数据时仍视为成功，仅无法计算市值变化
             return AutoUpdateResult(
                 fundId=fund["id"], fundName=fund["name"], fundCode=code,
-                success=False, oldMarketValue=old_market,
-                newMarketValue=old_market,
-                message="缺少份额数据，请先填写基金份额",
+                success=True,
+                oldMarketValue=old_market, newMarketValue=old_market,
+                todayChange=today_change, todayProfit=0,
+                calculatedReturnRate=fund.get("current_return_rate", 0) or 0,
+                message=f"净值 {info['nav']}（缺少份额，无法计算市值变化）",
             )
 
         new_market = round(shares * info["nav"], 2)
@@ -267,9 +273,8 @@ async def auto_update_nav(user_id: str = Depends(_uid)):
         else:
             new_return_rate = fund.get("current_return_rate", 0) or 0
 
-        # 计算今日涨跌幅：优先使用实时估值涨跌幅，否则用历史净值反算
-        today_change = info.get("estimated_change")
-        if today_change is None and shares > 0 and info["nav"] > 0 and old_market > 0:
+        # 用历史净值反算涨跌幅（兜底）
+        if today_change is None and info["nav"] > 0 and old_market > 0:
             yesterday_nav = old_market / shares
             if yesterday_nav > 0:
                 today_change = round((info["nav"] - yesterday_nav) / yesterday_nav * 100, 4)
