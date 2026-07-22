@@ -24,35 +24,35 @@
           >
           <!-- ========== 标题栏（折叠时可见） ========== -->
           <template #title>
-            <div class="flex items-center justify-between w-full pr-2">
-              <div class="flex-1 min-w-0">
-                <div class="flex items-center gap-1.5 mb-0.5">
-                  <span class="fund-title-name">{{ fund.name }}</span>
-                  <span
-                    class="fund-edit-icon cursor-pointer opacity-40 hover:opacity-100 ml-1.5"
-                    @click.stop="openFundModal(fund.id)"
-                  >✎</span>
+            <div class="w-full pr-2">
+              <div class="flex items-center justify-between w-full">
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-1.5 mb-0.5">
+                    <span class="fund-title-name">{{ fund.name }}</span>
+                    <span
+                      class="fund-edit-icon cursor-pointer opacity-40 hover:opacity-100 ml-1.5"
+                      @click.stop="openFundModal(fund.id)"
+                    >✎</span>
+                  </div>
+                  <div class="flex items-center gap-2 text-xs" style="color:var(--text-secondary)">
+                    <span v-if="fund.fundCode">{{ fund.fundCode }}</span>
+                    <span v-if="fund.fundShares > 0">| {{ fmtNum(fund.fundShares) }}份</span>
+                    <span>| {{ (daysBetween(fund.buyDate) || '--') }}天</span>
+                  </div>
                 </div>
-                <div class="flex items-center gap-2 text-xs" style="color:var(--text-secondary)">
-                  <span v-if="fund.fundCode">{{ fund.fundCode }}</span>
-                  <span v-if="fund.fundShares > 0">| {{ fmtNum(fund.fundShares) }}份</span>
-                  <span>| {{ (daysBetween(fund.buyDate) || '--') }}天</span>
+                <div class="text-right flex-shrink-0 ml-3">
+                  <div
+                    class="text-sm font-bold whitespace-nowrap"
+                    :class="fundStateColorClass(fund)"
+                  >¥{{ fmtNum(fund.currentMarketValue) }}</div>
+                  <div
+                    class="text-xs font-semibold whitespace-nowrap"
+                    :class="profitRateOf(fund) >= 0 ? 'text-red-500' : 'text-green-500'"
+                  >{{ fmtSigned(profitRateOf(fund)) }}%</div>
                 </div>
               </div>
-              <div class="text-right flex-shrink-0 ml-3">
-                <div
-                  class="text-sm font-bold"
-                  :class="fundStateColorClass(fund)"
-                >¥{{ fmtNum(fund.currentMarketValue) }}</div>
-                <div
-                  class="text-xs font-semibold"
-                  :class="profitRateOf(fund) >= 0 ? 'text-red-500' : 'text-green-500'"
-                >{{ fmtSigned(profitRateOf(fund)) }}%</div>
-                <div v-if="fundStates[fund.id]?.todayChange != null && !isNaN(fundStates[fund.id]?.todayChange)" class="text-xs mt-0.5">
-                  <span class="whitespace-nowrap" :class="fundStates[fund.id]?.todayChange >= 0 ? 'text-red-500' : 'text-green-500'">
-                    今日 {{ fmtSigned(fundStates[fund.id]?.todayChange) }}% / {{ fmtSigned(fundStates[fund.id]?.todayProfit) }}元
-                  </span>
-                </div>
+              <div v-if="fundStates[fund.id]?.todayChange != null && !isNaN(fundStates[fund.id]?.todayChange)" class="text-right text-xs mt-1 whitespace-nowrap" :class="fundStates[fund.id]?.todayChange >= 0 ? 'text-red-500' : 'text-green-500'">
+                今日 {{ fmtSigned(fundStates[fund.id]?.todayChange) }}% / {{ fmtSigned(fundStates[fund.id]?.todayProfit) }}元
               </div>
             </div>
           </template>
