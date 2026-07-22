@@ -1,5 +1,5 @@
 <template>
-  <div class="auth-container">
+  <div :class="['auth-container', isLogin ? 'auth-login' : 'auth-register']">
     <div class="auth-card">
       <div class="auth-header">
         <h1 class="auth-title">📊 理财小助理</h1>
@@ -108,6 +108,16 @@ async function handleSubmit() {
   justify-content: center;
   padding: 24px;
   background: var(--bg-primary);
+  transition: background 0.4s ease;
+}
+
+/* 注册模式 — 浅蓝紫渐变背景，一眼区分 */
+.auth-register {
+  background: linear-gradient(135deg, #e8f0fe 0%, #f3e8ff 30%, #faf5ff 70%, #e8f0fe 100%);
+}
+
+html.dark .auth-register {
+  background: linear-gradient(135deg, #1a1a3e 0%, #1e1b4b 30%, #172554 70%, #1a1a3e 100%);
 }
 
 .auth-card {
@@ -206,6 +216,11 @@ async function handleSubmit() {
   transition: opacity 0.2s;
 }
 
+/* 注册按钮 — 蓝紫色调，与登录的青色区分 */
+.auth-register .submit-btn {
+  background: linear-gradient(135deg, #818cf8, #6366f1);
+}
+
 .submit-btn:active {
   opacity: 0.85;
 }
@@ -220,6 +235,11 @@ async function handleSubmit() {
   font-size: 0.82rem;
   color: #12edd7;
   cursor: pointer;
+}
+
+/* 注册模式的切换链接 — 与注册按钮色调一致 */
+.auth-register .switch-mode {
+  color: #818cf8;
 }
 
 .switch-mode:active {
