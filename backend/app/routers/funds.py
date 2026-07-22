@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Depends, Header
@@ -202,8 +203,10 @@ async def query_fund(code: str = Query(..., min_length=6, max_length=6, descript
 async def auto_update_nav(user_id: str = Depends(_uid)):
     """
     一键获取所有基金最新净值/涨跌幅（预览模式）
-    从东方财富拉取最新净值、新浪财经获取盘中实时估值，
-    计算预期市值，不直接写入数据库，由前端展示确认后手动应用
+    从东方财富拉取最新净值、新浪财经获取盘中实时估值；
+    盘中优先用新浪实时估值净值计算市值（实时反映涨跌），
+    当晚净值结算后自动切回已结算净值。
+    不直接写入数据库，由前端展示确认后手动应用
     """
     conn = get_db()
     rows = conn.execute(
@@ -234,7 +237,18 @@ async def auto_update_nav(user_id: str = Depends(_uid)):
                 message="获取基金实时数据失败",
             )
 
-        if info["nav"] <= 0:
+        # 选择用于计算市值的净值：
+        # 盘中（已结算净值日期 < 北京今天）且新浪实时估值可用 → 用估值净值，实时反映涨跌；
+        # 当晚净值已结算（date == 今天）或无估值 → 用准确的已结算净值。
+        # 注意必须用北京时间判断"今天"，服务器在海外时本地日期可能差一天。
+        beijing_today = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")
+        settled_nav = info["nav"]
+        est_nav = info.get("estimated_nav") or 0
+        use_estimate = est_nav > 0 and info.get("date", "") < beijing_today
+        nav_for_calc = est_nav if use_estimate else settled_nav
+        nav_label = "实时估值" if use_estimate else "净值"
+
+        if nav_for_calc <= 0:
             return AutoUpdateResult(
                 fundId=fund["id"], fundName=fund["name"], fundCode=code,
                 success=False,
@@ -257,11 +271,11 @@ async def auto_update_nav(user_id: str = Depends(_uid)):
                 oldMarketValue=old_market, newMarketValue=old_market,
                 todayChange=today_change, todayProfit=0,
                 calculatedReturnRate=fund.get("current_return_rate", 0) or 0,
-                message=f"净值 {info['nav']}（缺少份额，无法计算市值变化）",
+                message=f"{nav_label} {nav_for_calc}（缺少份额，无法计算市值变化）",
             )
 
-        new_market = round(shares * info["nav"], 2)
-        message = f"净值 {info['nav']}，份额 {shares}"
+        new_market = round(shares * nav_for_calc, 2)
+        message = f"{nav_label} {nav_for_calc}，份额 {shares}"
 
         # 计算预期收益率（不写数据库）
         total_buy = fund.get("total_buy_amount", 0) or 0
@@ -274,10 +288,10 @@ async def auto_update_nav(user_id: str = Depends(_uid)):
             new_return_rate = fund.get("current_return_rate", 0) or 0
 
         # 用历史净值反算涨跌幅（兜底）
-        if today_change is None and info["nav"] > 0 and old_market > 0:
+        if today_change is None and nav_for_calc > 0 and old_market > 0:
             yesterday_nav = old_market / shares
             if yesterday_nav > 0:
-                today_change = round((info["nav"] - yesterday_nav) / yesterday_nav * 100, 4)
+                today_change = round((nav_for_calc - yesterday_nav) / yesterday_nav * 100, 4)
         today_profit = round(new_market - old_market, 2)
 
         return AutoUpdateResult(

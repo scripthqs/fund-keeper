@@ -104,17 +104,22 @@ async def get_fund_estimate(code: str) -> dict:
     """
     从新浪财经获取基金盘中实时估值（支付宝/蚂蚁财富同款数据源）
 
-    天天基金 fundgz.1234567.com.cn 已于 2026 年停用，
-    现改用新浪财经接口获取盘中估值，交易时段每分钟更新。
+    实时估值在返回的 networth 分时列表中（交易时段每分钟一条），取最后一条：
+    - pre_nav: 估算净值（字符串，如 "1.4693"）
+    - nav_pct: 估算涨跌幅百分比（字符串，如 "1.6829" 表示 +1.68%，无需换算）
+    - min_time / pre_date: 估值时间与日期
+
+    注意：顶层的 worth / worth_rate 是【上一个交易日】的收盘估值
+    （worth_date 可验证），盘中读取会拿到昨天的数据，不能当作今日实时涨跌幅。
 
     Returns:
         {
-            "estimated_nav": 1.4450,       # 盘中估算净值
-            "estimated_change": 10.64,     # 估算涨跌幅 (%)
-            "estimate_time": "14:35:00",   # 估值时间
+            "estimated_nav": 1.4693,       # 盘中估算净值
+            "estimated_change": 1.68,      # 估算涨跌幅 (%)
+            "estimate_time": "10:22:00",   # 估值时间
             "estimate_date": "2026-07-22", # 估值日期
         }
-        非交易时段或无数据时返回 None 值
+        无实时估值数据时返回 None 值
     """
     try:
         resp = await _safe_https_request("GET", FUND_ESTIMATE_URL, params={"symbol": code})
@@ -126,35 +131,34 @@ async def get_fund_estimate(code: str) -> dict:
             return {"estimated_nav": None, "estimated_change": None, "estimate_time": "", "estimate_date": ""}
 
         inner = data.get("result", {}).get("data", {})
-        worth_str = inner.get("worth", "")
-        worth_rate = inner.get("worth_rate")
-        worth_date = inner.get("worth_date", "")  # YYYYMMDD
+        networth_list = inner.get("networth", []) or []
 
-        # 格式化日期
-        estimate_date = ""
-        if len(worth_date) == 8:
-            estimate_date = f"{worth_date[:4]}-{worth_date[4:6]}-{worth_date[6:8]}"
+        if not networth_list:
+            logger.info("基金 %s 当前无实时估值数据（可能该基金不支持盘中估值）", code)
+            return {"estimated_nav": None, "estimated_change": None, "estimate_time": "", "estimate_date": ""}
 
-        if not worth_str:
-            logger.info("基金 %s 当前无实时估值数据（可能非交易时段）", code)
-            return {"estimated_nav": None, "estimated_change": None, "estimate_time": "", "estimate_date": estimate_date}
-
-        estimated_nav = float(worth_str)
-        # worth_rate 是小数形式（如 0.0106 = 1.06%），转为百分比
+        # 取最新一条分时估值
+        last = networth_list[-1]
+        estimated_nav = None
         estimated_change = None
-        if worth_rate is not None:
-            try:
-                estimated_change = round(float(worth_rate) * 100, 4)
-            except (ValueError, TypeError):
-                pass
+        try:
+            pre_nav = last.get("pre_nav")
+            if pre_nav:
+                estimated_nav = float(pre_nav)
+        except (ValueError, TypeError):
+            pass
+        try:
+            nav_pct = last.get("nav_pct")
+            if nav_pct not in (None, ""):
+                estimated_change = round(float(nav_pct), 4)  # nav_pct 已是百分比，不要 ×100
+        except (ValueError, TypeError):
+            pass
 
-        # 取最新一条分时数据的时间
-        networth_list = inner.get("networth", [])
-        estimate_time = ""
-        if networth_list:
-            estimate_time = networth_list[-1].get("min_time", "")
+        estimate_time = last.get("min_time", "")
+        estimate_date = last.get("pre_date", "")
 
-        logger.info("基金 %s 实时估值: nav=%s change=%s%% time=%s", code, estimated_nav, estimated_change, estimate_time)
+        logger.info("基金 %s 实时估值: nav=%s change=%s%% time=%s date=%s",
+                    code, estimated_nav, estimated_change, estimate_time, estimate_date)
         return {
             "estimated_nav": estimated_nav,
             "estimated_change": estimated_change,
