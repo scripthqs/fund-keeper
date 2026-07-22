@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import re
+import socket
+import ssl
 from typing import Optional
 
 import httpx
@@ -36,19 +38,49 @@ HEADERS = {
 
 # 使用 httpx AsyncClient 复用连接
 _client: Optional[httpx.AsyncClient] = None
+_client_no_verify: Optional[httpx.AsyncClient] = None
 
 
-def _get_client() -> httpx.AsyncClient:
-    """获取或创建 httpx 异步客户端（容忍 SSL 环境差异）"""
-    global _client
+def _get_client(verify_ssl: bool = True) -> httpx.AsyncClient:
+    """获取或创建 httpx 异步客户端
+
+    Args:
+        verify_ssl: 是否验证 SSL 证书。远程部署环境下可能因 CA 证书不全导致 SSL 失败。
+    """
+    global _client, _client_no_verify
+    if not verify_ssl:
+        if _client_no_verify is None or _client_no_verify.is_closed:
+            _client_no_verify = httpx.AsyncClient(
+                headers=HEADERS,
+                timeout=httpx.Timeout(25.0, connect=10.0),
+                follow_redirects=True,
+                verify=False,
+            )
+        return _client_no_verify
     if _client is None or _client.is_closed:
         _client = httpx.AsyncClient(
             headers=HEADERS,
-            timeout=httpx.Timeout(30.0, connect=15.0),
+            timeout=httpx.Timeout(25.0, connect=10.0),
             follow_redirects=True,
-            # 使用默认 SSL 验证，但 catch SSL 错误时记录详细信息
+            verify=True,
         )
     return _client
+
+
+async def _safe_https_request(method: str, url: str, **kwargs) -> httpx.Response:
+    """安全的 HTTPS 请求：先尝试验证 SSL，失败后自动降级为不验证模式。
+
+    部分云平台（如某些容器环境）缺少 CA 证书包，导致 SSL 握手失败。
+    降级时会记录 warning 日志，不影响正常功能。
+    """
+    try:
+        client = _get_client(verify_ssl=True)
+        return await client.request(method, url, **kwargs)
+    except (ssl.SSLError, ssl.SSLCertVerificationError) as e:
+        logger.warning("SSL 验证失败，尝试降级为不验证模式: %s", str(e)[:200])
+        logger.warning("目标URL: %s", url)
+        client = _get_client(verify_ssl=False)
+        return await client.request(method, url, **kwargs)
 
 
 def _get_fallback_client() -> httpx.AsyncClient:
@@ -85,8 +117,7 @@ async def get_fund_estimate(code: str) -> dict:
         非交易时段或无数据时返回 None 值
     """
     try:
-        client = _get_client()
-        resp = await client.get(FUND_ESTIMATE_URL, params={"symbol": code})
+        resp = await _safe_https_request("GET", FUND_ESTIMATE_URL, params={"symbol": code})
         resp.raise_for_status()
         data = resp.json()
 
@@ -131,7 +162,7 @@ async def get_fund_estimate(code: str) -> dict:
             "estimate_date": estimate_date,
         }
     except Exception as e:
-        logger.warning("获取基金 %s 新浪估值失败: %s", code, e)
+        _log_network_error("新浪估值", code, e)
         return {"estimated_nav": None, "estimated_change": None, "estimate_time": "", "estimate_date": ""}
 
 
@@ -163,9 +194,15 @@ async def query_fund_by_code(code: str) -> dict:
     # 获取基金名称（东方财富）
     name = await get_fund_name(code)
     if not name:
+        logger.error(
+            "[query_fund_by_code] 基金 %s 获取名称失败，可能原因: "
+            "1)服务器无法访问 fund.eastmoney.com（海外部署常见）"
+            "2)DNS 解析失败 3)基金代码无效",
+            code,
+        )
         raise FundQueryError(
             f"未查询到基金代码 {code} 的信息",
-            detail="请确认基金代码是否正确",
+            detail="请确认: 1)基金代码正确 2)服务器可访问东方财富API（海外服务器可能被墙）",
             recoverable=False,
         )
 
@@ -182,7 +219,7 @@ async def query_fund_by_code(code: str) -> dict:
             update_time = date
             logger.info("基金 %s 历史净值: nav=%s date=%s", code, nav, date)
     except Exception as e:
-        logger.warning("获取基金 %s 历史净值失败: %s", code, e)
+        _log_network_error("历史净值(query_fund)", code, e)
 
     # 获取实时估值（新浪财经，支付宝同款数据源）
     estimate = await get_fund_estimate(code)
@@ -226,7 +263,6 @@ async def get_fund_nav_history(
         [{ "date": "2024-01-15", "nav": 1.2345, "accumulated_nav": 2.3456, "daily_change": "0.12" }, ...]
     """
     try:
-        client = _get_client()
         params = {
             "fundCode": code,
             "pageIndex": page_index,
@@ -237,7 +273,7 @@ async def get_fund_nav_history(
         if end_date:
             params["endDate"] = end_date
 
-        resp = await client.get(FUND_HISTORY_URL, params=params)
+        resp = await _safe_https_request("GET", FUND_HISTORY_URL, params=params)
         resp.raise_for_status()
         data = resp.json()
 
@@ -256,7 +292,7 @@ async def get_fund_nav_history(
             })
         return result
     except Exception as e:
-        logger.error("获取基金 %s 历史净值失败: %s", code, e)
+        _log_network_error("历史净值", code, e)
         return []
 
 
@@ -326,5 +362,166 @@ async def get_fund_name(code: str) -> Optional[str]:
 
             return None
     except Exception as e:
-        logger.error("获取基金 %s 名称失败: %s", code, e)
+        _log_network_error("基金名称", code, e)
         return None
+
+
+def _log_network_error(api_name: str, code: str, exc: Exception) -> None:
+    """统一网络错误日志，按错误类型分类输出详细信息，便于远程部署排查"""
+    exc_type = type(exc).__name__
+    exc_msg = str(exc)[:300]
+
+    if isinstance(exc, httpx.ConnectError):
+        logger.error(
+            "[%s] 基金 %s 连接失败(ConnectError): %s | 请检查: 1)服务器能否访问外网 2)DNS是否正常解析 3)防火墙是否拦截",
+            api_name, code, exc_msg,
+        )
+    elif isinstance(exc, httpx.ConnectTimeout):
+        logger.error(
+            "[%s] 基金 %s 连接超时(ConnectTimeout): %s | 可能原因: 服务器到国内金融API网络不通或延迟极高",
+            api_name, code, exc_msg,
+        )
+    elif isinstance(exc, httpx.ReadTimeout):
+        logger.error(
+            "[%s] 基金 %s 读取超时(ReadTimeout): %s | 接口响应慢，可能服务端限流",
+            api_name, code, exc_msg,
+        )
+    elif isinstance(exc, (ssl.SSLError, ssl.SSLCertVerificationError, httpx.SSLError)):
+        logger.error(
+            "[%s] 基金 %s SSL错误(SSL): %s | 远程环境可能缺少CA证书，可尝试设置 verify=False",
+            api_name, code, exc_msg,
+        )
+    else:
+        logger.error(
+            "[%s] 基金 %s 未知错误(%s): %s",
+            api_name, code, exc_type, exc_msg,
+        )
+
+
+async def check_network_connectivity() -> dict:
+    """诊断外部 API 网络连通性，用于排查远程部署问题。
+
+    依次测试三个外部 API 的可达性，返回各接口的连接耗时和错误信息。
+    调用方：GET /api/funds/network-check
+    """
+    import time
+
+    test_code = "000001"  # 用一只已知基金做测试
+    results = {}
+    overall = {"success": True}
+
+    # 1) 东方财富 - 基金信息（HTTP 明文）
+    try:
+        async with _get_fallback_client() as client:
+            t0 = time.monotonic()
+            resp = await client.get(FUND_INFO_URL.format(code=test_code))
+            elapsed = round((time.monotonic() - t0) * 1000)
+            resp.raise_for_status()
+            name_match = re.search(r'fS_name\s*=\s*"([^"]+)"', resp.text)
+            results["eastmoney_info"] = {
+                "reachable": True,
+                "latency_ms": elapsed,
+                "status": resp.status_code,
+                "name": name_match.group(1) if name_match else "未解析",
+                "note": f"HTTP 明文, {elapsed}ms",
+            }
+    except Exception as e:
+        results["eastmoney_info"] = {
+            "reachable": False,
+            "error_type": type(e).__name__,
+            "error": str(e)[:200],
+            "note": "该接口走 HTTP，海外/云平台可能拦截",
+        }
+        overall["success"] = False
+
+    # 2) 东方财富 - 历史净值（HTTPS）
+    try:
+        t0 = time.monotonic()
+        resp = await _safe_https_request("GET", FUND_HISTORY_URL, params={"fundCode": test_code, "pageSize": 1})
+        elapsed = round((time.monotonic() - t0) * 1000)
+        resp.raise_for_status()
+        data = resp.json()
+        results["eastmoney_history"] = {
+            "reachable": True,
+            "latency_ms": elapsed,
+            "status": resp.status_code,
+            "has_data": data.get("ErrCode") == 0,
+            "note": f"HTTPS, {elapsed}ms",
+        }
+    except Exception as e:
+        results["eastmoney_history"] = {
+            "reachable": False,
+            "error_type": type(e).__name__,
+            "error": str(e)[:200],
+            "note": "该接口需要 HTTPS Referer，部分云平台可能SSL异常",
+        }
+        overall["success"] = False
+
+    # 3) 新浪财经 - 实时估值（HTTPS）
+    try:
+        t0 = time.monotonic()
+        resp = await _safe_https_request("GET", FUND_ESTIMATE_URL, params={"symbol": test_code})
+        elapsed = round((time.monotonic() - t0) * 1000)
+        results["sina_estimate"] = {
+            "reachable": True if resp.status_code == 200 else False,
+            "latency_ms": elapsed,
+            "status": resp.status_code,
+            "note": f"HTTPS, {elapsed}ms",
+        }
+    except Exception as e:
+        results["sina_estimate"] = {
+            "reachable": False,
+            "error_type": type(e).__name__,
+            "error": str(e)[:200],
+            "note": "新浪接口，海外可能不可达",
+        }
+        overall["success"] = False
+
+    # DNS 解析测试
+    from urllib.parse import urlparse
+    dns = {}
+    for name, url in [
+        ("fund.eastmoney.com", "http://fund.eastmoney.com"),
+        ("api.fund.eastmoney.com", "https://api.fund.eastmoney.com"),
+        ("stock.finance.sina.com.cn", "https://stock.finance.sina.com.cn"),
+    ]:
+        host = urlparse(url).hostname
+        try:
+            ip = socket.getaddrinfo(host, 443, socket.AF_INET)
+            dns[name] = {"resolved": True, "ip": ip[0][4][0] if ip else "unknown"}
+        except Exception as e:
+            dns[name] = {"resolved": False, "error": str(e)[:200]}
+
+    return {
+        "overall": overall,
+        "dns_check": dns,
+        "api_check": results,
+        "advice": _generate_diagnosis_advice(results, dns, overall),
+    }
+
+
+def _generate_diagnosis_advice(api_results: dict, dns: dict, overall: dict) -> list[str]:
+    """根据诊断结果生成修复建议"""
+    advice = []
+    if overall["success"]:
+        advice.append("所有外部API连通正常，问题可能在其他地方（请检查前端控制台和后端日志）")
+        return advice
+
+    if all(not d.get("resolved", True) for d in dns.values()):
+        advice.append("DNS全部解析失败 -> 服务器可能无法访问外网，请检查服务器网络配置")
+
+    for name, info in dns.items():
+        if not info.get("resolved"):
+            advice.append(f"DNS解析失败: {name} -> 服务器无法解析该域名，检查DNS配置或/etc/hosts")
+
+    for key, info in api_results.items():
+        if not info.get("reachable"):
+            err_type = info.get("error_type", "")
+            if "SSL" in err_type or "Certificate" in err_type:
+                advice.append(f"SSL证书错误({key}): 远程环境缺少CA证书 -> 可设置 httpx 的 verify=False")
+            elif "Connect" in err_type or "Timeout" in err_type:
+                advice.append(f"连接超时({key}): 国内金融API从海外或云平台访问可能被墙 -> 考虑部署到国内服务器或使用代理")
+            elif "ConnectError" in err_type:
+                advice.append(f"连接拒绝({key}): 防火墙可能拦截了出站请求 -> 检查云平台安全组/防火墙规则")
+
+    return advice or ["未知错误，请查看上方详细错误信息手动排查"]

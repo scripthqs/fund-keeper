@@ -11,6 +11,30 @@
 
 ---
 
+## 一键部署（推荐）
+
+在项目根目录打开 PowerShell，运行 `deploy.ps1`：
+
+```powershell
+# 同时更新前后端（最常用）
+.\deploy.ps1
+
+# 只更新前端
+.\deploy.ps1 -Target frontend
+
+# 只更新后端
+.\deploy.ps1 -Target backend
+
+# 只更新 Python 依赖
+.\deploy.ps1 -Target deps
+```
+
+脚本会自动完成：本地构建 → 清空远端旧文件 → 上传 → 重启服务。不再需要手动敲多段 scp/ssh 命令。
+
+> 首次使用建议先配置 SSH 密钥免密登录，避免反复输密码。如果密码每次不同，脚本执行时会逐步提示输入。
+
+---
+
 ## 只更新前端
 
 适用于：改了页面样式、功能逻辑，没动后端代码。

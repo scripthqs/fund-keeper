@@ -16,7 +16,7 @@ from app.models import (
     OverallAnalysisRequest, OverallAnalysisResponse,
 )
 
-from app.fund_api import query_fund_by_code, get_fund_nav_on_date, FundQueryError
+from app.fund_api import query_fund_by_code, get_fund_nav_on_date, FundQueryError, check_network_connectivity
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/funds", tags=["基金管理"])
@@ -315,6 +315,17 @@ async def auto_update_nav(user_id: str = Depends(_uid)):
         skippedCount=skipped_count,
         results=results,
     )
+
+
+@router.get("/network-check")
+async def network_check():
+    """诊断外部 API 网络连通性（排查海外/云平台部署时外网不通问题）"""
+    try:
+        result = await check_network_connectivity()
+        return result
+    except Exception as e:
+        logger.error("网络诊断执行失败: %s", e)
+        raise HTTPException(status_code=500, detail=f"诊断失败: {e}")
 
 
 @router.post("/action", response_model=ExecuteActionResponse)
