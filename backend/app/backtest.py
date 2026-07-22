@@ -6,6 +6,8 @@
 - 对比基准：同期一次性买入持有
 """
 
+from __future__ import annotations
+
 import logging
 from typing import Optional
 

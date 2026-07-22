@@ -208,7 +208,7 @@ def _brute_parse_json(text: str) -> dict:
     tiers: list = []
     pullback_tiers: list = []
     current_section = None       # "tiers" | "pullbackTiers" | None
-    pending_line: float | None = None  # 暂存跨行的 line 值
+    pending_line: Optional[float] = None  # 暂存跨行的 line 值
 
     # 按行扫描，识别 [tiers] / [pullbackTiers] 区段和其中的 {line, ratio} 对
     for raw_line in text.split("\n"):

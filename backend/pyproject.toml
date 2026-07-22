@@ -1,0 +1,46 @@
+[project]
+name = "fund-keeper-backend"
+version = "1.0.0"
+description = "Fund Keeper Backend"
+# 远程服务器 Python 3.8.10，本地开发最低保证 3.8 兼容
+requires-python = ">=3.8"
+
+[tool.ruff]
+# 按 3.8 检查 —— 会拦截 list[dict]、str.removeprefix、dict|dict 等 3.9+ 语法
+target-version = "py38"
+
+[tool.ruff.lint]
+select = [
+    "F",    # Pyflakes - 基础错误
+    "E",    # pycodestyle 错误
+    "W",    # pycodestyle 警告
+    "UP",   # pyupgrade - 检测不兼容的现代语法（含 PEP 585/604）
+    "YTT",  # 年份相关
+    "FA",   # flake8-future-annotations - 检查 from __future__ import annotations 必要性
+]
+ignore = [
+    "E501",  # 行长度（交给 IDE 处理）
+]
+
+# 排除虚拟环境和缓存
+exclude = [
+    "venv",
+    "__pycache__",
+    ".git",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pyright]
+# VSCode Pylance/Pyright 类型检查按 3.8 来，写 3.9+ 语法会标红
+pythonVersion = "3.8"
+pythonPlatform = "All"
+typeCheckingMode = "basic"
+
+reportMissingTypeStubs = false
+reportUnknownMemberType = false
+reportUnknownParameterType = false
+reportUnknownArgumentType = false
+reportUnknownVariableType = false

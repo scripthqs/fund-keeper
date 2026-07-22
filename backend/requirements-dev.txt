@@ -1,0 +1,3 @@
+# 开发工具 —— 部署前必跑 ruff check app/
+ruff>=0.11.0       # 以 py38 为目标检查，拦截 list[dict]、X|Y、str.removeprefix 等 3.9+ 语法
+
