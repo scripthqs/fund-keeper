@@ -98,25 +98,6 @@ function Deploy-Frontend {
 function Deploy-Backend {
     Write-Step "======== Deploy Backend ========"
 
-    # 检查海外服务器上 dist/ 目录是否存在，不存在则自动部署前端
-    Write-Step "Checking frontend dist on overseas..."
-    # 注意：不能用 $result = ssh ... 捕获嵌套 ssh 的输出，
-    # 否则内层 ssh 的密码提示会被 PowerShell 隐藏，表现为输入跳板密码后"卡住"。
-    # 改用退出码判断：test -d 目录存在返回 0
-    if ($UseProxyJump) {
-        ssh -J $CHINA_SERVER $OVERSEAS_SERVER "test -d $REMOTE_BASE/dist"
-    } else {
-        ssh -t $CHINA_SERVER "ssh -t $OVERSEAS_SERVER 'test -d $REMOTE_BASE/dist'"
-    }
-    $distExists = ($LASTEXITCODE -eq 0)
-    if (-not $distExists) {
-        Write-Step "Dist not found or check failed, will deploy frontend as precaution..."
-    }
-    if (-not $distExists) {
-        Write-Step "Dist not found on server, deploying frontend first..."
-        Deploy-Frontend
-    }
-
     Write-Step "Clean local __pycache__..."
     Get-ChildItem -Path "$LOCAL_BASE\backend" -Directory -Recurse -Filter "__pycache__" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     Write-Step "Upload backend code..."
