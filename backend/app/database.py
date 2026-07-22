@@ -168,6 +168,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     ],
     "stopProfitRatio": 10,
     "trailingStop": 15,
+    "trailingActivation": 10,
     "useTrailingStop": True,
     "extremeVolatility": 8,
     "enableStopLoss": True,

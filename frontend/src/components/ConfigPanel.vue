@@ -16,6 +16,7 @@
       <van-cell-group v-show="activeTab === 'stopProfit'" inset>
         <van-field v-model.number="c.stopProfitLine" label="止盈触发线 (%)" type="number" @change="save" />
         <van-field v-model.number="c.stopProfitRatio" label="止盈卖出比例 (%)" type="number" @change="save" />
+        <van-field v-model.number="c.trailingActivation" label="回撤保护激活线 (%)" type="number" placeholder="峰值收益率达到此值后启用移动止盈" @change="save" />
         <van-field v-model.number="c.trailingStop" label="移动止盈回撤线 (%)" type="number" @change="save" />
         <van-cell title="启用移动止盈">
           <template #value><van-checkbox v-model="c.useTrailingStop" /></template>
@@ -85,7 +86,8 @@ function applyPreset() {
   const p = STYLE_PRESETS[c.style]
   if (!p) return
   c.stopProfitLine = p.stopProfit; c.stopProfitRatio = p.stopRatio
-  c.trailingStop = p.trailing; c.extremeVolatility = p.extreme; c.stopLossLine = p.stopLoss
+  c.trailingStop = p.trailing; c.trailingActivation = p.trailingAct ?? 10
+  c.extremeVolatility = p.extreme; c.stopLossLine = p.stopLoss
   c.stopLossRatio = p.stopLossRatio; c.freeDays = p.freeDays; c.maxPosition = p.maxPos
   save()
 }

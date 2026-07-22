@@ -13,7 +13,6 @@ export function analyzeFundEnhanced(fund, todayChange, totalReturn, config, peak
 
   // 基金自己的 addTiers 优先，无则使用默认档位
   const effectiveAddTiers = (fund.addTiers && fund.addTiers.length > 0) ? fund.addTiers : DEFAULT_FUND_TIERS
-  const effectiveAddMode = 'multi'
 
   // 合并基金独立止盈止损（非零值才覆盖全局）
   const effectiveStopProfitLine = fund.stopProfitLine || config.stopProfitLine
@@ -22,17 +21,19 @@ export function analyzeFundEnhanced(fund, todayChange, totalReturn, config, peak
   const effectiveStopLossRatio = fund.stopLossRatio || config.stopLossRatio
   const effectiveEnableStopLoss = effectiveStopLossLine < 0  // 如果基金有设止损线就启用
 
-  // 规则0：极端行情（仅在尚未触发止损/加仓时生效，避免挡住连跌多天的合理操作）
+  // 规则0：极端行情（只挡买入和观望，不挡止盈/止损卖出——大涨大跌正是执行卖出的时机）
   if (Math.abs(todayChange) >= config.extremeVolatility) {
     // 已触发止损线 → 继续止损流程
     const hitStopLoss = effectiveEnableStopLoss && totalReturn <= effectiveStopLossLine
+    // 已触发止盈线 → 继续止盈流程（暴涨日落袋，不能被极端规则挡住）
+    const hitStopProfit = totalReturn >= effectiveStopProfitLine
     // 已在加仓区域 → 即使当日暴跌也应该继续评估加仓（连跌多天后单日再暴跌，反而是好买点）
     let hitBuyZone = false
-    if (!hitStopLoss) {
+    if (!hitStopLoss && !hitStopProfit) {
       hitBuyZone = totalReturn <= Math.max(...effectiveAddTiers.map(t => t.line))
     }
-    // 既没触发止损也没进入加仓区 → 纯粹的单日极端波动，暂停操作
-    if (!hitStopLoss && !hitBuyZone) {
+    // 既没触发卖出条件也没进入加仓区 → 纯粹的单日极端波动，暂停操作
+    if (!hitStopLoss && !hitStopProfit && !hitBuyZone) {
       return { type: 'extreme', title: '⚠️ 极端波动', message: `今日涨跌幅 ${fmtSigned(todayChange)}%，超过极端波动线 ±${config.extremeVolatility}%，按规则不操作，请明天再评估。`, cssClass: 'advice-extreme', actionAmount: null }
     }
   }
@@ -48,7 +49,8 @@ export function analyzeFundEnhanced(fund, todayChange, totalReturn, config, peak
     const trailing = checkTrailingStop(fund, config, peakReturnRate)
     if (trailing && trailing.triggered) {
       const sellAmount = round(mulDiv(fund.currentMarketValue, effectiveStopProfitRatio, 100))
-      return { type: 'trailing_sell', title: '📉 移动止盈触发！', message: `从最高收益率 ${fmtSigned(trailing.peakReturn)}% 回撤了 ${trailing.drawdown.toFixed(1)}%，超过回撤线 ${config.trailingStop}%。建议卖出 ¥${fmtNum(sellAmount)} 元锁定利润。`, cssClass: 'advice-sell', actionAmount: sellAmount, actionType: '卖出', isTrailingStop: true }
+      const lockText = totalReturn >= 0 ? '锁定利润' : '控制回撤'
+      return { type: 'trailing_sell', title: '📉 移动止盈触发！', message: `从最高收益率 ${fmtSigned(trailing.peakReturn)}% 回撤了 ${trailing.drawdown.toFixed(1)}%，超过回撤线 ${config.trailingStop}%。建议卖出 ¥${fmtNum(sellAmount)} 元${lockText}。`, cssClass: 'advice-sell', actionAmount: sellAmount, actionType: '卖出', isTrailingStop: true }
     }
   }
 
@@ -65,7 +67,10 @@ export function analyzeFundEnhanced(fund, todayChange, totalReturn, config, peak
   if (fund.strategyType === 'pullback' && fund.pullbackTiers?.length && totalReturn > 0) {
     const pullbackBuy = getPullbackAddBuy(fund, fund.pullbackTiers, totalReturn, peakReturnRate)
     if (pullbackBuy) {
-      return { type: 'pullback_buy', title: `📈 触发第 ${pullbackBuy.tierIdx} 档回调加仓！`, message: `当前已从高点 ${fmtSigned(peakReturnRate?.[fund.id] || totalReturn)}% 回撤 ${pullbackBuy.drawdown.toFixed(1)}%，触发回调加仓线（回撤≥${Math.abs(pullbackBuy.line)}%）。建议买入初始本金的 ${pullbackBuy.ratio}%，即 ¥${fmtNum(pullbackBuy.buyAmount)} 元（上涨趋势中的黄金坑，回调即上车）。`, cssClass: 'advice-buy', actionAmount: pullbackBuy.buyAmount, actionType: '买入' }
+      const budget = capByBudget(fund, pullbackBuy.buyAmount)
+      if (!budget.exhausted) {
+        return { type: 'pullback_buy', title: `📈 触发第 ${pullbackBuy.tierIdx} 档回调加仓！`, message: `当前已从高点 ${fmtSigned(peakReturnRate?.[fund.id] || totalReturn)}% 回撤 ${pullbackBuy.drawdown.toFixed(1)}%，触发回调加仓线（回撤≥${Math.abs(pullbackBuy.line)}%）。建议买入初始本金的 ${pullbackBuy.ratio}%，即 ¥${fmtNum(budget.amount)} 元（上涨趋势中的黄金坑，回调即上车）。`, cssClass: 'advice-buy', actionAmount: budget.amount, actionAmountMax: budget.max, actionType: '买入' }
+      }
     }
     // 接近回调加仓区域
     const closestPb = [...fund.pullbackTiers].sort((a, b) => b.line - a.line).find(t => {
@@ -79,10 +84,11 @@ export function analyzeFundEnhanced(fund, todayChange, totalReturn, config, peak
     }
   }
 
-  // 规则3：加仓（下跌金字塔）
+  // 规则3：加仓（下跌金字塔，目标仓位法）
   const multiBuy = getMultiTierAddBuy(fund, effectiveAddTiers, totalReturn)
   if (multiBuy) {
-    return { type: 'buy', title: `📉 触发第 ${multiBuy.tierIdx} 档加仓！`, message: `预计今日总收益变为${fmtSigned(totalReturn)}%，触发第 ${multiBuy.tierIdx} 档加仓线（≤${multiBuy.line}%）。建议买入初始本金的 ${multiBuy.ratio}%，即 ¥${fmtNum(multiBuy.buyAmount)} 元（金字塔策略：越跌越买）。`, cssClass: 'advice-buy', actionAmount: multiBuy.buyAmount, actionType: '买入' }
+    const catchUpText = multiBuy.tiersCrossed > 1 ? `今日已穿越 ${multiBuy.tiersCrossed} 档，一次性补齐至目标仓位；` : ''
+    return { type: 'buy', title: `📉 触发第 ${multiBuy.tierIdx} 档加仓！`, message: `预计今日总收益变为${fmtSigned(totalReturn)}%，已跌至第 ${multiBuy.tierIdx} 档加仓线（≤${multiBuy.line}%）。${catchUpText}建议买入 ¥${fmtNum(multiBuy.buyAmount)} 元（目标累计加仓 ¥${fmtNum(multiBuy.targetAddTotal)}，金字塔策略：越跌越买）。`, cssClass: 'advice-buy', actionAmount: multiBuy.buyAmount, actionAmountMax: multiBuy.remainingBudget != null && multiBuy.remainingBudget > multiBuy.buyAmount ? multiBuy.remainingBudget : null, actionType: '买入' }
   }
 
   // 规则4：接近加仓区域
@@ -103,22 +109,67 @@ export function checkTrailingStop(fund, config, peakReturnRate) {
   const currentReturn = fund.currentReturnRate
   if (currentReturn > peak) return { triggered: false, peakReturn: currentReturn, drawdown: 0, newPeak: currentReturn }
   const drawdown = toNum(B(peak).minus(currentReturn))
-  const effectiveStopProfitLine = fund.stopProfitLine || config.stopProfitLine
-  if (peak >= effectiveStopProfitLine && drawdown >= config.trailingStop) return { triggered: true, peakReturn: peak, drawdown }
+  // 激活门槛与止盈线解耦：峰值达到 trailingActivation（默认 10%）即启用回撤保护，
+  // 避免震荡市中浮盈涨了十几个点又全部回吐却没有任何落袋信号
+  const activation = config.trailingActivation ?? 10
+  if (peak >= activation && drawdown >= config.trailingStop) return { triggered: true, peakReturn: peak, drawdown }
   return { triggered: false, peakReturn: peak, drawdown }
 }
 
-/** 多档加仓（下跌金字塔） */
+/** 按 maxInvestment 预算约束买入金额 */
+export function capByBudget(fund, amount) {
+  if (!fund.maxInvestment || fund.maxInvestment <= 0) return { amount, max: null, exhausted: false }
+  const remaining = round(B(fund.maxInvestment).minus(fund.totalBuyAmount || 0))
+  if (remaining <= 0) return { amount: 0, max: null, exhausted: true }
+  return { amount: Math.min(amount, remaining), max: remaining > amount ? remaining : null, exhausted: false }
+}
+
+/** 多档加仓（下跌金字塔）
+ *
+ * 目标仓位法：计算所有被穿越档位对应的理论累计加仓额，减去实际已加仓金额，
+ * 差额即本次建议买入额。与回测口径一致：
+ * - 每档只买一次（已买过的档不会重复建议）
+ * - 单日暴跌穿越多档时，自动一次性补齐全部档位
+ * - 受 maxInvestment 预算上限约束
+ */
 export function getMultiTierAddBuy(fund, addTiers, totalReturn) {
   if (!addTiers || !addTiers.length) return null
-  const sortedTiers = [...addTiers].sort((a, b) => b.line - a.line)
-  for (const tier of sortedTiers) {
-    if (totalReturn <= tier.line) {
-      const buyAmount = round(mulDiv(fund.initialPrincipal, tier.ratio, 100))
-      return { tierIdx: addTiers.indexOf(tier) + 1, line: tier.line, ratio: tier.ratio, buyAmount }
+  const sortedTiers = [...addTiers].sort((a, b) => b.line - a.line)  // 从浅到深
+  let ratioSum = 0
+  let deepestIdx = -1
+  for (let i = 0; i < sortedTiers.length; i++) {
+    if (totalReturn <= sortedTiers[i].line) {
+      ratioSum += sortedTiers[i].ratio
+      deepestIdx = i
     }
   }
-  return null
+  if (deepestIdx < 0) return null
+
+  const initial = fund.initialPrincipal || 0
+  // 已加仓金额 = 累计买入 - 初始本金（卖出不影响成本口径，只影响市值）
+  const alreadyAdded = Math.max(0, (fund.totalBuyAmount || 0) - initial)
+  const targetAddTotal = round(B(initial).times(ratioSum).div(100))
+  let buyAmount = round(B(targetAddTotal).minus(alreadyAdded))
+  if (buyAmount < 1) return null  // 已买到目标仓位 / 差额过小
+
+  // 预算上限封顶
+  let remainingBudget = null
+  if (fund.maxInvestment > 0) {
+    remainingBudget = round(B(fund.maxInvestment).minus(fund.totalBuyAmount || 0))
+    if (remainingBudget <= 0) return null  // 预算已用完
+    if (buyAmount > remainingBudget) buyAmount = remainingBudget
+  }
+
+  const tier = sortedTiers[deepestIdx]
+  return {
+    tierIdx: addTiers.indexOf(tier) + 1,
+    line: tier.line,
+    ratio: tier.ratio,
+    buyAmount,
+    tiersCrossed: deepestIdx + 1,  // 本次穿越档数（>1 说明单日暴跌，已补齐多档）
+    targetAddTotal,                // 理论累计加仓目标
+    remainingBudget,               // 剩余预算（供"上限"快捷按钮）
+  }
 }
 
 /** 上涨回调加仓 */

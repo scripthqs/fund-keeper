@@ -1079,6 +1079,18 @@ async function save() {
 ::deep(.van-field--error .van-field__control) {
   --van-field-control-error-color: #ef4444;
 }
+
+/* 档位/止盈止损网格内的半宽字段：标签宽度自适应内容，避免被表单级 label-width=7em 遮挡 */
+.tier-grid :deep(.van-field__label) {
+  width: auto !important;
+  flex: none;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  margin-right: 6px;
+}
+.tier-grid :deep(.van-field__control) {
+  min-width: 0;
+}
 /* AI 打字机光标闪烁 */
 @keyframes blink {
   0%,
