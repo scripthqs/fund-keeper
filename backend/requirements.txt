@@ -19,3 +19,6 @@ chinese-calendar>=1.10.0
 
 # HTTP Async Client
 httpx>=0.27.0
+
+# JSON5 - 增强 JSON 解析容错（尾逗号、注释、裸键）
+json5>=0.9.0
