@@ -8,7 +8,7 @@ export default defineConfig({
     // 开发模式下代理 API 请求到后端
     proxy: {
       '/api': {
-        target: 'http://localhost:18000',
+        target: 'http://localhost:8000',
         changeOrigin: true,
       },
     },
