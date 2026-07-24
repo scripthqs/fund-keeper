@@ -17,7 +17,6 @@ class AddTier(BaseModel):
 class FundBase(BaseModel):
     name: str
     fund_code: str = Field("", alias="fundCode")
-    fund_shares: float = Field(0, alias="fundShares")
     initial_principal: float = Field(0, alias="initialPrincipal")
     buy_date: str = Field("", alias="buyDate")
     total_buy_amount: float = Field(0, alias="totalBuyAmount")

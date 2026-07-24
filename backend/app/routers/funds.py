@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Depends, Header
 from fastapi.responses import StreamingResponse
@@ -12,12 +12,10 @@ from fastapi.responses import StreamingResponse
 from app.database import get_db, gen_id, now_str, today_str, get_current_user_id
 from app.models import (
     FundCreate, FundOut, FundUpdate, ExecuteActionRequest, ExecuteActionResponse,
-    FundQueryResponse, AutoUpdateResult, AutoUpdateResponse, AddTier,
-    TierRecommendRequest, TierRecommendResponse,
-    OverallAnalysisRequest, OverallAnalysisResponse,
+    FundQueryResponse, AutoUpdateResult, AutoUpdateResponse, TierRecommendRequest, OverallAnalysisRequest, OverallAnalysisResponse,
 )
 
-from app.fund_api import query_fund_by_code, get_fund_nav_on_date, FundQueryError, check_network_connectivity
+from app.fund_api import query_fund_by_code, FundQueryError, check_network_connectivity
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/funds", tags=["基金管理"])
@@ -69,18 +67,17 @@ async def create_fund(fund: FundCreate, user_id: str = Depends(_uid)):
     pullback_tiers_json = json.dumps([t.model_dump() for t in pullback_raw], ensure_ascii=False)
     conn.execute(
         """INSERT INTO funds
-           (id, name, fund_code, fund_shares, initial_principal, buy_date,
+           (id, name, fund_code, initial_principal, buy_date,
             total_buy_amount, total_sell_amount, current_market_value,
             current_return_rate, max_investment, add_tiers,
             strategy_type, pullback_tiers,
             stop_profit_line, stop_loss_line, stop_profit_ratio, stop_loss_ratio,
             created_at, user_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             fund_id,
             data["name"],
             data.get("fundCode", ""),
-            data.get("fundShares", 0),
             data["initialPrincipal"],
             data["buyDate"],
             data["totalBuyAmount"],
@@ -129,7 +126,7 @@ async def update_fund(fund_id: str, fund: FundUpdate, user_id: str = Depends(_ui
     pullback_tiers_json = json.dumps([t.model_dump() for t in pullback_raw], ensure_ascii=False)
     conn.execute(
         """UPDATE funds SET
-           name=?, fund_code=?, fund_shares=?, initial_principal=?, buy_date=?,
+           name=?, fund_code=?, initial_principal=?, buy_date=?,
            total_buy_amount=?, total_sell_amount=?, current_market_value=?,
            current_return_rate=?, max_investment=?, add_tiers=?,
            strategy_type=?, pullback_tiers=?,
@@ -138,7 +135,6 @@ async def update_fund(fund_id: str, fund: FundUpdate, user_id: str = Depends(_ui
         (
             data["name"],
             data.get("fundCode", ""),
-            data.get("fundShares", 0),
             data["initialPrincipal"],
             data["buyDate"],
             data["totalBuyAmount"],
@@ -248,58 +244,25 @@ async def auto_update_nav(user_id: str = Depends(_uid)):
         nav_for_calc = est_nav if use_estimate else settled_nav
         nav_label = "实时估值" if use_estimate else "净值"
 
-        if nav_for_calc <= 0:
-            return AutoUpdateResult(
-                fundId=fund["id"], fundName=fund["name"], fundCode=code,
-                success=False,
-                oldMarketValue=fund["current_market_value"],
-                newMarketValue=fund["current_market_value"],
-                message="获取基金实时数据失败",
-            )
-
         old_market = fund["current_market_value"]
-        shares = fund.get("fund_shares", 0) or 0
 
         # 今日涨跌幅：优先使用新浪实时估值涨跌幅
         today_change = info.get("estimated_change")
 
-        if shares <= 0:
-            # 无份额数据时仍视为成功，仅无法计算市值变化
-            return AutoUpdateResult(
-                fundId=fund["id"], fundName=fund["name"], fundCode=code,
-                success=True,
-                oldMarketValue=old_market, newMarketValue=old_market,
-                todayChange=today_change, todayProfit=0,
-                calculatedReturnRate=fund.get("current_return_rate", 0) or 0,
-                message=f"{nav_label} {nav_for_calc}（缺少份额，无法计算市值变化）",
-            )
+        # 由于前端会根据 currentMarketValue + todayChange 自行计算更新后市值，
+        # 后端不再依赖份额计算，仅返回涨跌幅等原始数据
+        new_market = old_market
+        message = f"{nav_label} {nav_for_calc}"
 
-        new_market = round(shares * nav_for_calc, 2)
-        message = f"{nav_label} {nav_for_calc}，份额 {shares}"
-
-        # 计算预期收益率（不写数据库）
-        total_buy = fund.get("total_buy_amount", 0) or 0
-        total_sell = fund.get("total_sell_amount", 0) or 0
-        if total_buy > 0:
-            new_return_rate = round(
-                (new_market - total_buy + total_sell) / total_buy * 100, 4
-            )
-        else:
-            new_return_rate = fund.get("current_return_rate", 0) or 0
-
-        # 用历史净值反算涨跌幅（兜底）
-        if today_change is None and nav_for_calc > 0 and old_market > 0:
-            yesterday_nav = old_market / shares
-            if yesterday_nav > 0:
-                today_change = round((nav_for_calc - yesterday_nav) / yesterday_nav * 100, 4)
-        today_profit = round(new_market - old_market, 2)
+        # 今日涨跌幅兜底：直接用0（前端会基于 todayChange 计算收益）
+        today_profit = 0
 
         return AutoUpdateResult(
             fundId=fund["id"], fundName=fund["name"], fundCode=code,
             success=True,
             oldMarketValue=old_market, newMarketValue=new_market,
             todayChange=today_change, todayProfit=today_profit,
-            calculatedReturnRate=new_return_rate, message=message,
+            calculatedReturnRate=None, message=message,
         )
 
     # 并发查询所有基金（带超时兜底：单只最长 40s，整体 60s）

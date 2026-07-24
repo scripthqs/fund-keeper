@@ -36,7 +36,6 @@
                   </div>
                   <div class="flex items-center gap-2 text-xs" style="color:var(--text-secondary)">
                     <span v-if="fund.fundCode">{{ fund.fundCode }}</span>
-                    <span v-if="fund.fundShares > 0">| {{ fmtNum(fund.fundShares) }}份</span>
                     <span>| {{ (daysBetween(fund.buyDate) || '--') }}天</span>
                   </div>
                 </div>
@@ -76,7 +75,6 @@
               <van-cell title="📅 持有" :value="(daysBetween(fund.buyDate) || '--') + ' 天'" />
               <van-cell title="🏦 本金" :value="'¥' + fmtNum(fund.initialPrincipal)" />
               <van-cell v-if="fund.fundCode" title="🔢 代码" :value="fund.fundCode" />
-              <van-cell v-if="fund.fundShares > 0" title="📦 份额" :value="fmtNum(fund.fundShares) + ' 份'" />
             </van-cell-group>
 
             <!-- 自动获取今日涨跌幅 -->
@@ -459,27 +457,32 @@ async function autoUpdate() {
     if (r.results) {
       for (const res of r.results) {
         if (res.success) {
-          const hasDataChange = res.newMarketValue !== res.oldMarketValue || res.todayChange != null
-          if (hasDataChange) {
-            const s = ensureState(res.fundId)
-            // todayChange 来自 API（准确），todayProfit 由前端基于当前市值和涨跌幅自行计算，
-            // 避免后端用 shares * nav 与 current_market_value 不一致导致错误
+          const s = ensureState(res.fundId)
+            // todayChange 来自 API（准确），todayProfit 由前端基于当前市值和涨跌幅自行计算
+            const fund = funds.value.find(f => f.id === res.fundId)
             const localProfit = res.todayChange != null
-              ? calcProfitFromChange(funds.value.find(f => f.id === res.fundId), res.todayChange)
+              ? calcProfitFromChange(fund, res.todayChange)
               : null
+            // 更新后市值 = 当前市值 + 今日收益（前端自行计算）
+            const newMarketVal = localProfit != null
+              ? round(B(res.oldMarketValue).plus(localProfit))
+              : res.newMarketValue
+            // 预期总收益率 = (更新后市值 - 总买入 + 总卖出) / 总买入 * 100
+            const calcReturnRate = (fund && fund.totalBuyAmount > 0 && localProfit != null)
+              ? calcTotalReturn(fund, B(newMarketVal).minus(fund.totalBuyAmount).plus(fund.totalSellAmount || 0))
+              : res.calculatedReturnRate
             s.previewData = {
               oldMarketValue: res.oldMarketValue,
-              newMarketValue: res.newMarketValue,
+              newMarketValue: newMarketVal,
               todayChange: res.todayChange,
               todayProfit: localProfit,
-              calculatedReturnRate: res.calculatedReturnRate,
+              calculatedReturnRate: calcReturnRate,
             }
             s.previewTime = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
             // 同步涨跌幅到输入框供查看
             if (res.todayChange != null) s.todayChange = res.todayChange
             if (localProfit != null) s.todayProfit = localProfit
-            if (res.calculatedReturnRate != null) s.totalReturn = res.calculatedReturnRate
-          }
+            if (calcReturnRate != null) s.totalReturn = calcReturnRate
         }
       }
     }
@@ -544,7 +547,6 @@ function buildPortfolioText() {
       const nextTier = f.addTiers.find(t => !t.executed)
       if (nextTier) lines.push(`下一加仓位：${nextTier.line}%（加仓比例 ${nextTier.ratio}%）`)
     }
-    if (f.fundShares > 0) lines.push(`持有份额：${f.fundShares}`)
     lines.push('')
   })
   return lines.join('\n')
@@ -665,14 +667,6 @@ async function autoFetchTodayChange(fund) {
       const valuationTime = info.update_time || info.date || '--'
       s.fetchResult = `✅ 获取成功：实时估算涨跌 ${info.estimated_change >= 0 ? '+' : ''}${info.estimated_change}%（估值时间 ${valuationTime}）`
       onChangeInput(fund.id)
-    } else if (info.nav > 0 && fund.fundShares > 0) {
-      // 回退：用最新已结算净值反算涨跌幅
-      const newMarket = fund.fundShares * info.nav
-      const change = (newMarket - fund.currentMarketValue) / fund.currentMarketValue * 100
-      s.todayChange = +change.toFixed(2)
-      s.profitManuallySet = false
-      s.fetchResult = `✅ 已根据最新净值计算：涨幅 ${change >= 0 ? '+' : ''}${change.toFixed(2)}%（净值 ${info.nav}）`
-      onChangeInput(fund.id)
     } else {
       s.fetchResult = '⚠️ 当前非交易时段，暂无实时估值数据'
     }
@@ -780,7 +774,6 @@ function buildFullUpdate(fund, overrides = {}) {
   return {
     name: fund.name,
     fundCode: fund.fundCode || '',
-    fundShares: fund.fundShares || 0,
     initialPrincipal: fund.initialPrincipal,
     buyDate: fund.buyDate,
     totalBuyAmount: fund.totalBuyAmount,

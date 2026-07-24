@@ -4,7 +4,6 @@ import json
 import sqlite3
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict
 
 from app.config import DB_PATH
@@ -30,7 +29,6 @@ def init_db():
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             fund_code TEXT DEFAULT '',
-            fund_shares REAL DEFAULT 0,
             last_nav_update TEXT DEFAULT '',
             initial_principal REAL DEFAULT 0,
             buy_date TEXT DEFAULT '',

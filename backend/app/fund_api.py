@@ -59,6 +59,7 @@ def _get_client(verify_ssl: bool = True) -> httpx.AsyncClient:
                 timeout=httpx.Timeout(25.0, connect=10.0),
                 follow_redirects=True,
                 verify=False,
+                trust_env=False,
             )
         return _client_no_verify
     if _client is None or _client.is_closed:
@@ -67,6 +68,7 @@ def _get_client(verify_ssl: bool = True) -> httpx.AsyncClient:
             timeout=httpx.Timeout(25.0, connect=10.0),
             follow_redirects=True,
             verify=True,
+            trust_env=False,
         )
     return _client
 
@@ -93,6 +95,7 @@ def _get_fallback_client() -> httpx.AsyncClient:
         headers=HEADERS,
         timeout=httpx.Timeout(10.0, connect=5.0),
         follow_redirects=True,
+        trust_env=False,
     )
 
 

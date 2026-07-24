@@ -63,14 +63,6 @@
             />
 
             <van-field
-              v-model.number="form.fundShares"
-              name="fundShares"
-              label="持有份额 (份)"
-              type="number"
-              placeholder="用于精确计算市值（可选）"
-            />
-
-            <van-field
               v-model.number="form.initialPrincipal"
               name="initialPrincipal"
               label="初始本金 (元)"
@@ -525,7 +517,6 @@ const defaultPullbackTiers = () => [
 const form = ref({
   name: "",
   fundCode: "",
-  fundShares: 0,
   initialPrincipal: 0,
   buyDate: new Date().toISOString().split("T")[0],
   currentMarketValue: 0,
@@ -721,11 +712,6 @@ async function queryFundInfo() {
   try {
     const info = await store.queryFund(code);
     form.value.name = info.name;
-    if (form.value.fundShares > 0 && info.nav > 0) {
-      form.value.currentMarketValue = +(
-        form.value.fundShares * info.nav
-      ).toFixed(2);
-    }
     // 展示查询结果（含实时估值）
     let tipMsg = `已查询到：${info.name}（净值 ${info.nav}`;
     if (info.estimated_nav != null && info.estimated_nav > 0) {
@@ -787,7 +773,6 @@ watch(
       Object.assign(form.value, {
         name: "",
         fundCode: "",
-        fundShares: 0,
         initialPrincipal: 0,
         buyDate: new Date().toISOString().split("T")[0],
         currentMarketValue: 0,
@@ -1033,7 +1018,6 @@ async function save() {
     const data = {
       name: raw.name,
       fundCode: raw.fundCode || "",
-      fundShares: cleanNumeric(raw.fundShares),
       initialPrincipal: cleanNumeric(raw.initialPrincipal),
       buyDate: raw.buyDate,
       totalBuyAmount:
