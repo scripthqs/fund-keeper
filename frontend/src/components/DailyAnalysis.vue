@@ -170,22 +170,14 @@
                   <span :class="fundStates[fund.id]?.previewData.calculatedReturnRate >= 0 ? 'text-red-500' : 'text-green-500'">{{ fmtSigned(fundStates[fund.id]?.previewData.calculatedReturnRate) }}%</span>
                 </div>
               </div>
-              <div class="preview-actions grid grid-cols-2 gap-2">
-                <van-button type="primary" round block size="small" :loading="fundStates[fund.id]?.applying" @click="applyPreview(fund)">✅ 应用变更</van-button>
-                <van-button type="default" round block size="small" @click="dismissPreview(fund.id)">❌ 忽略</van-button>
+              <div class="preview-actions">
+                <span class="text-xs" style="color:#12edd7">✅ 已自动应用</span>
               </div>
             </div>
 
             <!-- 操作按钮 -->
-            <div class="grid grid-cols-2 gap-2">
-              <van-button type="default" round block size="small" :loading="fundStates[fund.id]?.fundUpdating" @click="updateFundData(fund)">💾 更新基金数据</van-button>
+            <div class="mb-2">
               <van-button type="primary" round block size="small" @click="analyze(fund)">🔍 分析操作建议</van-button>
-            </div>
-
-            <!-- 撤回更新 -->
-            <div v-if="fundStates[fund.id]?.lastSnapshot" class="undo-row mt-2">
-              <span class="undo-text">✅ 数据已更新</span>
-              <van-button size="mini" round plain type="warning" :loading="fundStates[fund.id]?.fundUpdating" @click="undoUpdate(fund)">↩ 撤回</van-button>
             </div>
 
 
@@ -258,8 +250,6 @@ function ensureState(fundId) {
       suggestedProfit: null,
       fetchingChange: false,
       fetchResult: '',
-      fundUpdating: false,
-      lastSnapshot: null,
       autoFetched: false,
     }
   }
@@ -453,37 +443,57 @@ async function autoUpdate() {
   try {
     const r = await store.autoUpdateNav()
     updateResult.value = r
-    // 将计算结果存入 fundStates 作为预览数据
+    // 自动应用更新
     if (r.results) {
+      let appliedCount = 0
       for (const res of r.results) {
-        if (res.success) {
-          const s = ensureState(res.fundId)
-            // todayChange 来自 API（准确），todayProfit 由前端基于当前市值和涨跌幅自行计算
-            const fund = funds.value.find(f => f.id === res.fundId)
-            const localProfit = res.todayChange != null
-              ? calcProfitFromChange(fund, res.todayChange)
-              : null
-            // 更新后市值 = 当前市值 + 今日收益（前端自行计算）
-            const newMarketVal = localProfit != null
-              ? round(B(res.oldMarketValue).plus(localProfit))
-              : res.newMarketValue
-            // 预期总收益率 = (更新后市值 - 总买入 + 总卖出) / 总买入 * 100
-            const calcReturnRate = (fund && fund.totalBuyAmount > 0 && localProfit != null)
-              ? calcTotalReturn(fund, B(newMarketVal).minus(fund.totalBuyAmount).plus(fund.totalSellAmount || 0))
-              : res.calculatedReturnRate
-            s.previewData = {
-              oldMarketValue: res.oldMarketValue,
-              newMarketValue: newMarketVal,
-              todayChange: res.todayChange,
-              todayProfit: localProfit,
-              calculatedReturnRate: calcReturnRate,
-            }
-            s.previewTime = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-            // 同步涨跌幅到输入框供查看
-            if (res.todayChange != null) s.todayChange = res.todayChange
-            if (localProfit != null) s.todayProfit = localProfit
-            if (calcReturnRate != null) s.totalReturn = calcReturnRate
+        if (!res.success) continue
+        const fund = funds.value.find(f => f.id === res.fundId)
+        if (!fund) continue
+
+        // 先捕获旧市值（updateFund 后 fund 对象会更新）
+        const oldMarketValue = fund.currentMarketValue
+        const oldReturnRate = fund.currentReturnRate
+
+        // 计算今日收益和更新后的市值
+        const localProfit = res.todayChange != null
+          ? calcProfitFromChange({ currentMarketValue: oldMarketValue }, res.todayChange)
+          : null
+        const newMarketVal = localProfit != null
+          ? round(B(oldMarketValue).plus(localProfit))
+          : oldMarketValue
+        const calcReturnRate = fund.totalBuyAmount > 0
+          ? round(B(newMarketVal).minus(fund.totalBuyAmount).plus(fund.totalSellAmount || 0).div(fund.totalBuyAmount).times(100), 2)
+          : oldReturnRate
+
+        // 直接更新基金数据
+        try {
+          await store.updateFund(fund.id, buildFullUpdate(fund, {
+            currentMarketValue: newMarketVal,
+            currentReturnRate: calcReturnRate,
+          }))
+        } catch (e) {
+          console.error('自动应用更新失败:', fund.name, e)
+          continue
         }
+
+        // 同步到 fundStates 显示
+        const s = ensureState(res.fundId)
+        s.todayChange = res.todayChange
+        s.todayProfit = localProfit
+        s.totalReturn = calcReturnRate
+        s.previewData = {
+          oldMarketValue: oldMarketValue,
+          newMarketValue: newMarketVal,
+          todayChange: res.todayChange,
+          todayProfit: localProfit,
+          calculatedReturnRate: calcReturnRate,
+        }
+        s.previewTime = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+        appliedCount++
+      }
+      if (appliedCount > 0) {
+        showTip(`✅ 已自动更新 ${appliedCount} 只基金`)
       }
     }
     // 自动触发 AI 整体组合分析
@@ -615,44 +625,6 @@ function refreshOverallAnalysis() {
   runOverallAnalysis()
 }
 
-function dismissPreview(fundId) {
-  const s = fundStates[fundId]
-  if (s) {
-    s.previewData = null
-    s.previewTime = null
-  }
-}
-
-async function applyPreview(fund) {
-  if (!fund) return
-  const s = ensureState(fund.id)
-  if (!s.previewData) { showTip('没有需要应用的预览数据'); return }
-  const pd = s.previewData
-
-  // 保存快照用于撤回
-  s.lastSnapshot = { currentMarketValue: fund.currentMarketValue, currentReturnRate: fund.currentReturnRate }
-  s.applying = true
-  try {
-    await store.updateFund(fund.id, buildFullUpdate(fund, {
-      currentMarketValue: pd.newMarketValue,
-      currentReturnRate: pd.calculatedReturnRate != null ? pd.calculatedReturnRate : fund.currentReturnRate,
-    }))
-    // 清除预览并同步今日数据到标题栏展示
-    s.previewData = null
-    s.previewTime = null
-    if (pd.todayChange != null) s.todayChange = pd.todayChange
-    if (pd.todayProfit != null) s.todayProfit = pd.todayProfit
-    s.profitManuallySet = false
-    showTip('✅ 已应用净值更新')
-  } catch (e) {
-    showTip('应用失败: ' + (e.message || '未知错误'))
-    s.lastSnapshot = null
-  } finally {
-    s.applying = false
-  }
-}
-
-// ---- 自动获取单只基金涨跌幅 ----
 async function autoFetchTodayChange(fund) {
   if (!fund || !fund.fundCode) return
   const s = ensureState(fund.id)
@@ -717,55 +689,6 @@ function applySuggestedProfit(fundId) {
     s.todayProfit = s.suggestedProfit
     s.profitManuallySet = false
     s.suggestedProfit = null
-  }
-}
-
-// ---- 更新 / 撤回 ----
-async function updateFundData(fund) {
-  if (!fund) { showTip('基金数据异常'); return }
-  const s = ensureState(fund.id)
-  if (s.todayChange == null || isNaN(s.todayChange)) { showTip('请输入今日涨跌幅'); return }
-  if (s.totalReturn == null || isNaN(s.totalReturn)) { showTip('请输入当前总收益率'); return }
-
-  s.lastSnapshot = { currentMarketValue: fund.currentMarketValue, currentReturnRate: fund.currentReturnRate }
-
-  let newMarketValue
-  if (s.profitManuallySet && s.todayProfit != null && !isNaN(s.todayProfit)) {
-    newMarketValue = round(B(fund.currentMarketValue).plus(s.todayProfit))
-  } else {
-    newMarketValue = round(B(fund.currentMarketValue).times(B(1).plus(B(s.todayChange).div(100))))
-  }
-
-  s.fundUpdating = true
-  try {
-    await store.updateFund(fund.id, buildFullUpdate(fund, {
-      currentMarketValue: newMarketValue,
-      currentReturnRate: s.totalReturn,
-    }))
-  } catch (e) {
-    showTip('更新失败: ' + (e.message || '未知错误'))
-    s.lastSnapshot = null
-  } finally {
-    s.fundUpdating = false
-  }
-}
-
-async function undoUpdate(fund) {
-  const s = ensureState(fund.id)
-  const snap = s.lastSnapshot
-  if (!snap || !fund) return
-  s.fundUpdating = true
-  try {
-    await store.updateFund(fund.id, buildFullUpdate(fund, {
-      currentMarketValue: snap.currentMarketValue,
-      currentReturnRate: snap.currentReturnRate,
-    }))
-    s.lastSnapshot = null
-    showTip('✅ 已撤回更新')
-  } catch (e) {
-    showTip('撤回失败: ' + (e.message || '未知错误'))
-  } finally {
-    s.fundUpdating = false
   }
 }
 
@@ -919,21 +842,6 @@ defineExpose({
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* 撤回行 */
-.undo-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 6px 12px;
-  font-size: 0.8rem;
-  background: rgba(255, 152, 0, 0.08);
-  border-radius: 8px;
-}
-
-.undo-text {
-  color: var(--text-secondary);
 }
 
 /* 净值更新预览面板 */

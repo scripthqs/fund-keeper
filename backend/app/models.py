@@ -187,6 +187,8 @@ class SnapshotCreate(BaseModel):
     recovery_needed: Optional[float] = Field(None, alias="recoveryNeeded")
     today_change: float = Field(0, alias="todayChange")
     total_return: float = Field(0, alias="totalReturn")
+    daily_profit: float = Field(0, alias="dailyProfit")
+    nav: float = Field(0, alias="nav")
 
     model_config = {"by_alias": True}
 

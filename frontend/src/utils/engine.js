@@ -22,7 +22,8 @@ export function analyzeFundEnhanced(fund, todayChange, totalReturn, config, peak
   const effectiveEnableStopLoss = effectiveStopLossLine < 0  // 如果基金有设止损线就启用
 
   // 规则0：极端行情（只挡买入和观望，不挡止盈/止损卖出——大涨大跌正是执行卖出的时机）
-  if (Math.abs(todayChange) >= config.extremeVolatility) {
+  const isExtreme = Math.abs(todayChange) >= config.extremeVolatility
+  if (isExtreme) {
     // 已触发止损线 → 继续止损流程
     const hitStopLoss = effectiveEnableStopLoss && totalReturn <= effectiveStopLossLine
     // 已触发止盈线 → 继续止盈流程（暴涨日落袋，不能被极端规则挡住）
@@ -98,6 +99,11 @@ export function analyzeFundEnhanced(fund, todayChange, totalReturn, config, peak
   }
 
   // 规则5：持有不动
+  // 如果当日已达到极端波动但前面规则都没触发（如已买满加仓档位），
+  // 应显示极端波动警告而非"安全区间"
+  if (isExtreme) {
+    return { type: 'extreme', title: '⚠️ 极端波动', message: `今日涨跌幅 ${fmtSigned(todayChange)}%，超过极端波动线 ±${config.extremeVolatility}%。当前总收益 ${fmtSigned(totalReturn)}%，因加仓档位已满/预算用尽等原因暂无操作，请明天再评估。`, cssClass: 'advice-extreme', actionAmount: null }
+  }
   return { type: 'hold', title: '✋ 持有不动', message: `预计今日总收益变为${fmtSigned(totalReturn)}%，在安全区间内，建议继续持有，无需操作。`, cssClass: 'advice-hold', actionAmount: null }
 }
 

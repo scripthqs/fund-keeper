@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings, FRONTEND_DIR
 from app.database import init_db, get_current_user_id
 from app.routers import funds, config, history, chat, snapshots, calendar, auth, admin
+from app.scheduler import start_scheduler, stop_scheduler
 
 # 日志配置
 logging.basicConfig(
@@ -46,6 +47,18 @@ app.include_router(snapshots.router)
 app.include_router(calendar.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
+
+
+@app.on_event("startup")
+async def on_startup():
+    """应用启动时开启定时任务调度器"""
+    start_scheduler()
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    """应用关闭时停止定时任务调度器"""
+    await stop_scheduler()
 
 
 def get_current_user(x_username: str = Header(None, alias="X-Username")):

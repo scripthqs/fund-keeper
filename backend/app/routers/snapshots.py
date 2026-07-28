@@ -19,12 +19,27 @@ async def list_snapshots(fund_id: str, user_id: str = Depends(_uid)):
     """获取某基金的历史快照"""
     conn = get_db()
     rows = conn.execute(
-        "SELECT fund_id, date, safety_cushion, recovery_needed, today_change, total_return "
+        "SELECT fund_id, date, safety_cushion, recovery_needed, today_change, total_return, "
+        "daily_profit, nav "
         "FROM snapshots WHERE fund_id = ? AND user_id = ? ORDER BY date",
         (fund_id, user_id),
     ).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    # 将 snake_case 列名转为 camelCase 供前端使用
+    result = []
+    for r in rows:
+        d = dict(r)
+        result.append({
+            "fundId": d["fund_id"],
+            "date": d["date"],
+            "safetyCushion": d["safety_cushion"],
+            "recoveryNeeded": d["recovery_needed"],
+            "todayChange": d["today_change"],
+            "totalReturn": d["total_return"],
+            "dailyProfit": d.get("daily_profit", 0),
+            "nav": d.get("nav", 0),
+        })
+    return result
 
 
 @router.post("", response_model=SnapshotOut)
@@ -44,13 +59,16 @@ async def save_snapshot(snap: SnapshotCreate, user_id: str = Depends(_uid)):
     if existing:
         conn.execute(
             """UPDATE snapshots SET
-               safety_cushion=?, recovery_needed=?, today_change=?, total_return=?
+               safety_cushion=?, recovery_needed=?, today_change=?, total_return=?,
+               daily_profit=?, nav=?
                WHERE fund_id=? AND date=? AND user_id=?""",
             (
                 data["safetyCushion"],
                 data["recoveryNeeded"],
                 data["todayChange"],
                 data["totalReturn"],
+                data.get("dailyProfit", 0),
+                data.get("nav", 0),
                 fund_id,
                 today,
                 user_id,
@@ -59,8 +77,9 @@ async def save_snapshot(snap: SnapshotCreate, user_id: str = Depends(_uid)):
     else:
         conn.execute(
             """INSERT INTO snapshots
-               (id, fund_id, user_id, date, safety_cushion, recovery_needed, today_change, total_return)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (id, fund_id, user_id, date, safety_cushion, recovery_needed,
+                today_change, total_return, daily_profit, nav)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 gen_id(),
                 fund_id,
@@ -70,6 +89,8 @@ async def save_snapshot(snap: SnapshotCreate, user_id: str = Depends(_uid)):
                 data["recoveryNeeded"],
                 data["todayChange"],
                 data["totalReturn"],
+                data.get("dailyProfit", 0),
+                data.get("nav", 0),
             ),
         )
 
@@ -83,4 +104,6 @@ async def save_snapshot(snap: SnapshotCreate, user_id: str = Depends(_uid)):
         "recovery_needed": data["recoveryNeeded"],
         "today_change": data["todayChange"],
         "total_return": data["totalReturn"],
+        "daily_profit": data.get("dailyProfit", 0),
+        "nav": data.get("nav", 0),
     }

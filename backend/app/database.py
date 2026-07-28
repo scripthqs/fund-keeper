@@ -97,7 +97,9 @@ def init_db():
             safety_cushion REAL,
             recovery_needed REAL,
             today_change REAL DEFAULT 0,
-            total_return REAL DEFAULT 0
+            total_return REAL DEFAULT 0,
+            daily_profit REAL DEFAULT 0,
+            nav REAL DEFAULT 0
         )
     """)
 
@@ -147,6 +149,12 @@ def migrate_db():
         cursor.execute("ALTER TABLE config ADD COLUMN user_id TEXT DEFAULT ''")
     except sqlite3.OperationalError:
         pass
+    # snapshots 表新增 daily_profit（当日收益金额）和 nav（当日净值）
+    for col, default in [("daily_profit", "0"), ("nav", "0")]:
+        try:
+            cursor.execute(f"ALTER TABLE snapshots ADD COLUMN {col} REAL DEFAULT {default}")
+        except sqlite3.OperationalError:
+            pass
     conn.commit()
     conn.close()
 
