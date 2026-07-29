@@ -113,6 +113,12 @@ async function loadChatAndHealth() {
 async function loadForTab(tabName, showLoading = false) {
   // 每次进入 tab 都重置对应标志，确保拿到最新数据
   switch (tabName) {
+    case 'chat':
+      _fundsLoaded.value = false
+      _configLoaded.value = false
+      _chatLoaded.value = false
+      _healthLoaded.value = false
+      break
     case 'holdings':
       _fundsLoaded.value = false
       _configLoaded.value = false
@@ -142,6 +148,9 @@ async function loadForTab(tabName, showLoading = false) {
   if (showLoading) loading.value = true
   try {
     switch (tabName) {
+      case 'chat':
+        await Promise.all([loadFundsAndConfig(), loadChatAndHealth()])
+        break
       case 'holdings':
         await Promise.all([loadFundsAndConfig(), loadSnapshots(), loadChatAndHealth()])
         break
@@ -313,6 +322,43 @@ async function sendChatMessageStream(message, fundContext, onChunk) {
   return fullReply
 }
 
+/** 智能对话（Function Calling）：AI 自动调用工具获取实时数据 */
+async function sendSmartMessage(message, fundContext, onChunk, onToolCall, onToolResult) {
+  const recent = chatMessages.value.slice(-20)
+  chatMessages.value.push({ role: 'user', content: message })
+  const aiIdx = chatMessages.value.length
+  chatMessages.value.push({ role: 'assistant', content: '' })
+
+  let fullReply = ''
+  try {
+    for await (const event of api.chatSmartStream(message, fundContext, recent)) {
+      if (!event) continue
+      if (event.done) break
+      if (event.error) {
+        chatMessages.value[aiIdx].content = 'AI 回复失败: ' + event.error
+        throw new Error(event.error)
+      }
+      if (event.tool_call && onToolCall) onToolCall(event.tool_call, event.tool_args)
+      // 工具结果事件：只通知回调，不混入AI回复
+      if (event.tool_result) {
+        if (onToolResult) onToolResult(event.tool_result, event.content)
+        continue
+      }
+      if (event.content) {
+        fullReply += event.content
+        chatMessages.value[aiIdx].content = fullReply
+        if (onChunk) onChunk(event.content, fullReply)
+      }
+    }
+  } catch (e) {
+    if (!chatMessages.value[aiIdx].content) {
+      chatMessages.value[aiIdx].content = 'AI 回复失败: ' + (e.message || '网络错误')
+    }
+    throw e
+  }
+  return fullReply
+}
+
 async function clearChat() { await api.clearChatMessages(); chatMessages.value = [] }
 
 function saveSnapshot(fid, sc, rn, tc, tr) {
@@ -365,7 +411,7 @@ export function useStore() {
     totalPrincipal, totalMarketValue, totalBuy, totalSell, totalReturnRate,
     loadAll, loadForTab, refreshForTab, refreshFunds, createFund, updateFund, removeFund,     executeAction, undoAction,
     saveConfig, updatePeakReturn, clearHistory, evaluateHistory,
-    sendChatMessage, sendChatMessageStream, clearChat, saveSnapshot, buildFundContext,
+    sendChatMessage, sendChatMessageStream, sendSmartMessage, clearChat, saveSnapshot, buildFundContext,
     queryFund, autoUpdateNav,
   }
 }

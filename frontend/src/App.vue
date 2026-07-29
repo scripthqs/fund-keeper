@@ -5,7 +5,7 @@
   <!-- 已登录：显示主界面 -->
   <div v-else :class="['app-container', { dark: isDark }]">
     <!-- 头部（仅持仓 tab 显示） -->
-    <header v-show="activeTab === 'holdings'" class="app-header">
+    <header v-show="activeTab === 'chat' || activeTab === 'holdings'" class="app-header">
       <div>
         <h1 class="app-title">
           📊 理财小助理
@@ -25,6 +25,9 @@
 
     <!-- Tab 页面内容 -->
     <div v-else class="tab-content">
+      <div v-show="activeTab === 'chat'">
+        <SmartChat />
+      </div>
       <div v-show="activeTab === 'holdings'">
         <HoldingsTab @addFund="openFundModal(null)" />
       </div>
@@ -42,6 +45,15 @@
     <!-- 底部 Tabbar -->
     <van-tabbar v-model="activeTab" :fixed="true" :border="true" :safe-area-inset-bottom="true"
       active-color="#12edd7" inactive-color="var(--text-secondary)">
+      <van-tabbar-item name="chat">
+        <template #icon>
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+            <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z"/>
+            <path d="M7 9h2v2H7V9zm4 0h2v2h-2V9zm4 0h2v2h-2V9z"/>
+          </svg>
+        </template>
+        对话
+      </van-tabbar-item>
       <van-tabbar-item name="holdings">
         <template #icon>
           <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
@@ -90,11 +102,12 @@ import HoldingsTab from './components/tabs/HoldingsTab.vue'
 import TradeTab from './components/tabs/TradeTab.vue'
 import StrategyTab from './components/tabs/StrategyTab.vue'
 import MineTab from './components/tabs/MineTab.vue'
+import SmartChat from './components/SmartChat.vue'
 
 const store = useStore()
 const isDark = ref(false)
 const currentTime = ref('')
-const activeTab = ref('holdings')
+const activeTab = ref('chat')
 const showAdvice = ref(false)
 const fundModalVisible = ref(false)
 const editingFundId = ref(null)
@@ -135,7 +148,7 @@ async function initApp() {
     isDark.value = true
     document.documentElement.classList.add('dark')
   }
-  await store.loadForTab('holdings', true)
+  await store.loadForTab('chat', true)
 }
 
 function openFundModal(id) {

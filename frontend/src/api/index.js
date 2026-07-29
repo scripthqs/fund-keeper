@@ -175,6 +175,10 @@ export const api = {
   chatStream: (message, fundContext, history) =>
     fetchSSE('/chat/stream', { message, fundContext, history }),
 
+  // 智能对话（支持 Function Calling 自动调用工具）
+  chatSmartStream: (message, fundContext, history) =>
+    fetchSSE('/chat/smart/stream', { message, fundContext, history }),
+
   // 情绪
   generateEmotion: (data) => http.post('/emotion', data),
   generateEmotionStream: (data) => fetchSSE('/emotion/stream', data),

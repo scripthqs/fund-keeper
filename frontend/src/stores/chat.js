@@ -72,6 +72,45 @@ export const useChatStore = defineStore('chat', () => {
     chatMessages.value = []
   }
 
+  /** 智能对话（Function Calling）：AI 自动调用工具获取实时数据 */
+  async function sendSmartMessage(message, fundContext, onChunk, onToolCall, onToolResult) {
+    const recent = chatMessages.value.slice(-20)
+    chatMessages.value.push({ role: 'user', content: message })
+    const aiIdx = chatMessages.value.length
+    chatMessages.value.push({ role: 'assistant', content: '' })
+
+    let fullReply = ''
+    try {
+      for await (const event of api.chatSmartStream(message, fundContext, recent)) {
+        if (!event) continue
+        if (event.done) break
+        if (event.error) {
+          chatMessages.value[aiIdx].content = 'AI 回复失败: ' + event.error
+          throw new Error(event.error)
+        }
+        if (event.tool_call) {
+          if (onToolCall) onToolCall(event.tool_call, event.tool_args)
+        }
+        // 工具结果事件：只通知回调，不混入AI回复
+        if (event.tool_result) {
+          if (onToolResult) onToolResult(event.tool_result, event.content)
+          continue
+        }
+        if (event.content) {
+          fullReply += event.content
+          chatMessages.value[aiIdx].content = fullReply
+          if (onChunk) onChunk(event.content, fullReply)
+        }
+      }
+    } catch (e) {
+      if (!chatMessages.value[aiIdx].content) {
+        chatMessages.value[aiIdx].content = 'AI 回复失败: ' + (e.message || '网络错误')
+      }
+      throw e
+    }
+    return fullReply
+  }
+
   return {
     chatMessages,
     aiStatus,
@@ -81,6 +120,7 @@ export const useChatStore = defineStore('chat', () => {
     resetLoadFlags,
     sendChatMessage,
     sendChatMessageStream,
+    sendSmartMessage,
     clearChat,
   }
 })
