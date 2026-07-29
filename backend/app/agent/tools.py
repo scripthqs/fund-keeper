@@ -64,7 +64,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "update_all_nav",
-            "description": "一键更新所有基金的净值，返回更新前后的市值对比和今日收益",
+            "description": "获取所有基金的最新实时净值和涨跌幅，查看当前市值变化",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -405,13 +405,31 @@ def tool_get_trading_suggestions(user_id: str) -> str:
 
 
 def tool_update_all_nav(user_id: str) -> str:
-    """🔄 更新净值"""
+    """📊 查询实时净值"""
     import asyncio
+    import concurrent.futures
     from app.fund_api import query_fund_by_code
 
     funds = _get_funds(user_id)
     if not funds:
         return "📭 当前没有持仓，无需更新。"
+
+    # 在已有事件循环中安全执行异步查询
+    def _query(code: str):
+        from app import fund_api
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(query_fund_by_code(code))
+
+        # 用独立线程的事件循环执行，每次执行前清理缓存的 AsyncClient（它绑定旧循环）
+        def _run_in_thread():
+            fund_api._client = None
+            fund_api._client_no_verify = None
+            return asyncio.run(query_fund_by_code(code))
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(_run_in_thread).result()
 
     results = []
     for f in funds:
@@ -421,7 +439,7 @@ def tool_update_all_nav(user_id: str) -> str:
             continue
 
         try:
-            info = asyncio.run(query_fund_by_code(code))
+            info = _query(code)
             if info:
                 old_mv = f["current_market_value"] or 0
                 est_change = info.get("estimated_change")
@@ -442,7 +460,7 @@ def tool_update_all_nav(user_id: str) -> str:
         except Exception as e:
             results.append(f"❌ **{f['name']}**：查询出错 - {e}")
 
-    return "🔄 **净值更新结果**\n\n" + "\n".join(results)
+    return "📊 **实时净值查询**\n\n" + "\n".join(results)
 
 
 def tool_get_investment_config(user_id: str) -> str:
@@ -758,14 +776,16 @@ def _clean_html_text(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _parse_bing_results(html: str) -> List[str]:
-    results = []
+def _parse_bing_results(html: str) -> List[dict]:
+    """解析 Bing 搜索结果，返回 [{title, url, snippet}]"""
+    results: List[dict] = []
     blocks = re.findall(r'<li class="b_algo"[^>]*>(.*?)</li>', html, re.DOTALL | re.IGNORECASE)
-    for block in blocks[:8]:
-        title_m = re.search(r"<h2[^>]*>\s*<a[^>]*>(.*?)</a>", block, re.DOTALL | re.IGNORECASE)
+    for block in blocks[:10]:
+        title_m = re.search(r"<h2[^>]*>\s*<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>", block, re.DOTALL | re.IGNORECASE)
         if not title_m:
             continue
-        title = _clean_html_text(title_m.group(1))
+        url = title_m.group(1)
+        title = _clean_html_text(title_m.group(2))
         if len(title) <= 5:
             continue
         snippet_m = re.search(
@@ -775,19 +795,20 @@ def _parse_bing_results(html: str) -> List[str]:
         )
         if not snippet_m:
             snippet_m = re.search(r"<p[^>]*>(.*?)</p>", block, re.DOTALL)
-        line = f"- **{title}**"
+        item = {"title": title, "url": url}
         if snippet_m:
             snippet = _clean_html_text(snippet_m.group(1))
             if snippet:
-                line += f"\n  {snippet[:200]}"
-        results.append(line)
+                item["snippet"] = snippet[:250]
+        results.append(item)
     return results
 
 
-def _parse_ddg_results(html: str) -> List[str]:
-    results = []
-    titles = re.findall(
-        r'<a[^>]*class="result__a"[^>]*>(.*?)</a>',
+def _parse_ddg_results(html: str) -> List[dict]:
+    """解析 DuckDuckGo 搜索结果"""
+    results: List[dict] = []
+    links = re.findall(
+        r'<a[^>]*class="result__a"[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>',
         html,
         re.DOTALL | re.IGNORECASE,
     )
@@ -796,21 +817,116 @@ def _parse_ddg_results(html: str) -> List[str]:
         html,
         re.DOTALL | re.IGNORECASE,
     )
-    for i, title_html in enumerate(titles[:8]):
+    for i, (url, title_html) in enumerate(links[:10]):
         title = _clean_html_text(title_html)
         if len(title) <= 5:
             continue
-        line = f"- **{title}**"
+        item = {"title": title, "url": url}
         if i < len(snippets):
             snippet = _clean_html_text(snippets[i])
             if snippet:
-                line += f"\n  {snippet[:200]}"
-        results.append(line)
+                item["snippet"] = snippet[:250]
+        results.append(item)
     return results
 
 
+def _format_result(items: List[dict], source: str) -> str:
+    """格式化搜索结果"""
+    lines = [f"### {source}"]
+    for i, item in enumerate(items, 1):
+        title = item.get("title", "")
+        url = item.get("url", "")
+        snippet = item.get("snippet", "")
+        lines.append(f"{i}. **[{title}]({url})**")
+        if snippet:
+            lines.append(f"   {snippet}")
+    return "\n".join(lines)
+
+
+# 金融类关键词，用于自动限定金融站点搜索
+_FINANCE_KEYWORDS = [
+    "基金", "股票", "A股", "港股", "美股", "大盘", "指数",
+    "央行", "降准", "降息", "利率", "通胀", "GDP", "PMI",
+    "行情", "涨跌", "牛市", "熊市", "回调", "反弹", "震荡",
+    "政策", "监管", "证监会", "银保监", "LPR", "MLF",
+    "板块", "概念", "题材", "龙头", "分红", "财报", "年报",
+    "北向", "南向", "外资", "主力", "散户", "机构",
+    "ETF", "LOF", "QDII", "REITs", "债券", "国债",
+    "投资", "理财", "持仓", "仓位", "止损", "止盈",
+    "证券", "券商", "保险", "银行", "地产", "科技",
+    "新能源", "医药", "消费", "军工", "半导体", "白酒",
+]
+
+
+def _is_finance_query(query: str) -> bool:
+    """判断是否为金融类查询"""
+    return any(kw in query for kw in _FINANCE_KEYWORDS)
+
+
+# 金融权威站点
+_FINANCE_SITES = [
+    "eastmoney.com",       # 东方财富
+    "finance.sina.com.cn",  # 新浪财经
+    "xueqiu.com",           # 雪球
+    "cnstock.com",          # 上海证券报
+    "cs.com.cn",            # 中证网
+    "10jqka.com.cn",        # 同花顺
+    "stcn.com",             # 证券时报
+    "p5w.net",              # 全景网
+    "yicai.com",            # 第一财经
+    "cls.cn",               # 财联社
+]
+
+
+def _search_bing(query: str, headers: dict, site_filter: bool = False) -> List[dict]:
+    """Bing 搜索，可选金融站点过滤"""
+    if site_filter:
+        site_query = " OR ".join(f"site:{s}" for s in _FINANCE_SITES[:5])
+        q = f"({query}) ({site_query})"
+    else:
+        q = query
+    try:
+        resp = httpx.get(
+            "https://cn.bing.com/search",
+            params={"q": q, "setlang": "zh-cn", "cc": "cn", "mkt": "zh-CN"},
+            headers=headers,
+            timeout=15.0,
+            follow_redirects=True,
+        )
+        if resp.status_code == 200:
+            return _parse_bing_results(resp.text)
+    except Exception as e:
+        logger.warning("Bing search failed: %s", e)
+    return []
+
+
+def _fetch_sina_news(headers: dict) -> List[dict]:
+    """从新浪财经获取最新快讯"""
+    try:
+        resp = httpx.get(
+            "https://feed.mix.sina.com.cn/api/roll/get",
+            params={"pageid": 153, "lid": 2509, "num": 10, "page": 1},
+            headers=headers,
+            timeout=10.0,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get("result", {}).get("data", [])
+            results: List[dict] = []
+            for item in items[:10]:
+                title = item.get("title", "")
+                url = item.get("url", "")
+                intro = item.get("intro", "") or item.get("description", "")
+                if title and url:
+                    results.append({"title": title, "url": url, "snippet": intro[:200]})
+            return results
+    except Exception as e:
+        logger.warning("Sina finance news failed: %s", e)
+    return []
+
+
 def tool_search_web(user_id: str = "", query: str = "") -> str:
-    """联网搜索 - Bing / DuckDuckGo"""
+    """联网搜索 - 多数据源聚合（Bing + 金融站点 + 新浪财经快讯）"""
     if not query:
         return "请提供搜索关键词"
 
@@ -822,22 +938,34 @@ def tool_search_web(user_id: str = "", query: str = "") -> str:
         ),
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     }
-    results: List[str] = []
 
-    try:
-        resp = httpx.get(
-            "https://www.bing.com/search",
-            params={"q": query, "setlang": "zh-cn", "cc": "cn", "mkt": "zh-CN"},
-            headers=headers,
-            timeout=15.0,
-            follow_redirects=True,
-        )
-        if resp.status_code == 200:
-            results = _parse_bing_results(resp.text)
-    except Exception as e:
-        logger.warning("Bing search failed: %s", e)
+    is_finance = _is_finance_query(query)
+    all_results: List[dict] = []
+    seen_urls: set = set()
 
-    if not results:
+    def add_results(items: List[dict]):
+        for item in items:
+            url = item.get("url", "")
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                all_results.append(item)
+
+    # 1. Bing 通用搜索
+    bing_results = _search_bing(query, headers)
+    add_results(bing_results)
+
+    # 2. 金融类查询：金融站点限定搜索
+    if is_finance:
+        finance_results = _search_bing(query, headers, site_filter=True)
+        add_results(finance_results)
+
+    # 3. 金融类查询：新浪财经快讯
+    if is_finance:
+        sina_results = _fetch_sina_news(headers)
+        add_results(sina_results)
+
+    if not all_results:
+        # DuckDuckGo 兜底
         try:
             resp = httpx.get(
                 "https://html.duckduckgo.com/html/",
@@ -847,13 +975,26 @@ def tool_search_web(user_id: str = "", query: str = "") -> str:
                 follow_redirects=True,
             )
             if resp.status_code == 200:
-                results = _parse_ddg_results(resp.text)
+                ddg_results = _parse_ddg_results(resp.text)
+                add_results(ddg_results)
         except Exception as e:
             logger.warning("DuckDuckGo search failed: %s", e)
 
-    if not results:
+    if not all_results:
         return f"搜索「{query}」暂无结果，请稍后重试或换个关键词"
-    return f"**搜索: {query}**\n\n" + "\n\n".join(results[:8])
+
+    # 格式化输出：标题 + URL + 摘要
+    lines = [f"**搜索: {query}**"]
+    if is_finance:
+        lines.append(f"*（已自动聚合 Bing 通用搜索 + 金融权威站点 + 新浪财经快讯，共 {len(all_results)} 条结果）*\n")
+    for i, item in enumerate(all_results[:12], 1):
+        title = item.get("title", "")
+        url = item.get("url", "")
+        snippet = item.get("snippet", "")
+        lines.append(f"{i}. **[{title}]({url})**")
+        if snippet:
+            lines.append(f"   {snippet}")
+    return "\n".join(lines)
 
 
 TOOL_MAP = {

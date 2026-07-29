@@ -120,7 +120,7 @@ const quickTags = [
   { icon: '📊', label: '持仓概览', msg: '帮我看看当前持仓概况' },
   { icon: '💰', label: '盈亏分析', msg: '分析一下各基金的盈亏情况' },
   { icon: '⚠️', label: '风险预警', msg: '检查所有基金的止盈止损预警' },
-  { icon: '🔄', label: '更新净值', msg: '帮我更新所有基金的净值' },
+  { icon: '📊', label: '实时净值', msg: '帮我查一下所有基金的最新净值和涨跌' },
   { icon: '🎯', label: '操作建议', msg: '根据当前持仓给出操作建议' },
   { icon: '➕', label: '添加基金', msg: '我想添加一只新基金' },
   { icon: '⚙️', label: '投资配置', msg: '查看当前的投资配置' },
@@ -166,7 +166,7 @@ async function send(customMsg) {
           get_fund_detail: '🔍 正在查询基金详情...',
           check_alerts: '⚠️ 正在检查预警状态...',
           get_trading_suggestions: '💡 正在分析操作建议...',
-          update_all_nav: '🔄 正在更新净值...',
+          update_all_nav: '📊 正在获取实时净值...',
           get_investment_config: '⚙️ 正在读取配置...',
           get_snapshot_history: '📈 正在加载走势数据...',
           get_operation_history: '📜 正在获取历史记录...',
@@ -285,10 +285,10 @@ onMounted(() => {
 /* 气泡 */
 .msg-bubble {
   max-width: 82%;
-  padding: 10px 14px;
+  padding: 12px 16px;
   border-radius: 14px;
-  font-size: 13px;
-  line-height: 1.65;
+  font-size: 14px;
+  line-height: 1.8;
   word-break: break-word;
 }
 .msg-bubble.user {
@@ -301,6 +301,109 @@ onMounted(() => {
   color: var(--text-primary);
   border-bottom-left-radius: 4px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  overflow-x: auto;
+}
+
+/* ===== AI 回复 Markdown 排版 ===== */
+.msg-bubble.assistant :deep(p) {
+  margin: 0 0 0.6em;
+}
+.msg-bubble.assistant :deep(p:last-child) {
+  margin-bottom: 0;
+}
+.msg-bubble.assistant :deep(strong) {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.msg-bubble.assistant :deep(h1),
+.msg-bubble.assistant :deep(h2),
+.msg-bubble.assistant :deep(h3) {
+  margin: 0.8em 0 0.4em;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.msg-bubble.assistant :deep(h1:first-child),
+.msg-bubble.assistant :deep(h2:first-child),
+.msg-bubble.assistant :deep(h3:first-child) {
+  margin-top: 0;
+}
+.msg-bubble.assistant :deep(ul),
+.msg-bubble.assistant :deep(ol) {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+.msg-bubble.assistant :deep(li) {
+  margin-bottom: 0.25em;
+  line-height: 1.7;
+}
+.msg-bubble.assistant :deep(table) {
+  width: auto;
+  min-width: 100%;
+  margin: 0.6em 0;
+  border-collapse: collapse;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.msg-bubble.assistant :deep(th),
+.msg-bubble.assistant :deep(td) {
+  padding: 6px 10px;
+  border: 1px solid var(--border-color);
+  text-align: left;
+  word-break: keep-all;
+}
+.msg-bubble.assistant :deep(th) {
+  background: rgba(0,0,0,0.03);
+  font-weight: 600;
+}
+.msg-bubble.assistant :deep(code) {
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 0.9em;
+  background: rgba(0,0,0,0.06);
+  color: #e74c3c;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+}
+.msg-bubble.assistant :deep(pre) {
+  margin: 0.6em 0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.04);
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.msg-bubble.assistant :deep(pre code) {
+  padding: 0;
+  background: none;
+  color: inherit;
+}
+.msg-bubble.assistant :deep(blockquote) {
+  margin: 0.5em 0;
+  padding: 4px 12px;
+  border-left: 3px solid #12edd7;
+  color: var(--text-secondary);
+}
+.msg-bubble.assistant :deep(hr) {
+  margin: 0.8em 0;
+  border: none;
+  border-top: 1px solid var(--border-color);
+}
+.msg-bubble.assistant :deep(a) {
+  color: #3b82f6;
+  text-decoration: none;
+}
+.msg-bubble.assistant :deep(a:hover) {
+  text-decoration: underline;
+}
+
+html.dark .msg-bubble.assistant :deep(th) {
+  background: rgba(255,255,255,0.04);
+}
+html.dark .msg-bubble.assistant :deep(code) {
+  background: rgba(255,255,255,0.08);
+}
+html.dark .msg-bubble.assistant :deep(pre) {
+  background: rgba(255,255,255,0.04);
 }
 
 /* 打字动画 */

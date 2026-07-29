@@ -132,17 +132,6 @@ body {
   box-shadow: 0 0 0 3px rgba(59,130,246,.15);
 }
 
-/* 折叠面板 */
-.collapsible-content {
-  max-height: 3000px; overflow: hidden;
-  transition: max-height 0.4s ease, opacity 0.3s ease;
-}
-.collapsible-content.collapsed {
-  max-height: 0 !important; opacity: 0;
-  padding-top: 0 !important; padding-bottom: 0 !important;
-  margin-top: 0 !important; margin-bottom: 0 !important;
-}
-
 /* 滚动条 */
 ::-webkit-scrollbar { width:6px; height:6px; }
 ::-webkit-scrollbar-track { background:transparent; }
@@ -175,35 +164,6 @@ body {
 
 
 
-/* 策略标签页 */
-.strategy-tabs { display:flex; gap:4px; margin-bottom:12px; flex-wrap:wrap; }
-.strategy-tab {
-  padding:6px 12px; border-radius:8px; font-size:0.8rem; cursor:pointer;
-  background:var(--bg-primary); border:1px solid var(--border-color); color:var(--text-secondary); transition:all 0.15s;
-}
-.strategy-tab.active { background:var(--btn-primary); color:#fff; border-color:var(--btn-primary); }
-.strategy-panel { display:none; }
-.strategy-panel.active { display:block; }
-
-/* 评分环 */
-.score-ring {
-  display:inline-flex; align-items:center; justify-content:center;
-  width:60px; height:60px; border-radius:50%; font-size:1.5rem; font-weight:700;
-}
-.score-blue { background:#dbeafe; color:#2563eb; }
-.score-yellow { background:#fef3c7; color:#d97706; }
-.score-slate { background:#e2e8f0; color:#475569; }
-.dark .score-blue { background:#1e3a8a; }
-.dark .score-yellow { background:#78350f; }
-.dark .score-slate { background:#334155; color:#cbd5e1; }
-
-/* 规划结果 */
-.plan-result-card {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: #fff; border-radius: 10px; padding: 1rem; text-align: center; margin-bottom: 0.75rem;
-}
-.plan-result-card .big-num { font-size: 1.5rem; font-weight: 700; }
-
 /* 历史表格 */
 .history-desktop { display: block; }
 .history-mobile { display: none; }
@@ -211,27 +171,6 @@ body {
   .history-desktop { display: none; }
   .history-mobile { display: block; }
 }
-
-/* DCA 表格 */
-.dca-table { width:100%; font-size:0.75rem; border-collapse:collapse; }
-.dca-table th, .dca-table td { padding:0.25rem 0.5rem; border-bottom:1px solid var(--border-color); text-align:left; }
-.dca-table th { color: var(--text-secondary); font-weight: 500; }
-
-/* 聊天气泡 */
-.chat-bubble {
-  max-width: 85%; border-radius: 12px; padding: 10px 14px;
-  font-size: 0.875rem; line-height: 1.625;
-}
-.chat-bubble.user {
-  background: #3b82f6; color: #fff; border-bottom-right-radius: 4px;
-}
-.chat-bubble.assistant {
-  background: var(--bg-card); border: 1px solid var(--border-color);
-  color: var(--text-primary); border-bottom-left-radius: 4px; white-space: pre-wrap;
-}
-
-/* 风险点 */
-.risk-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px; }
 
 /* 基金交易时段指示 */
 .trading-badge {

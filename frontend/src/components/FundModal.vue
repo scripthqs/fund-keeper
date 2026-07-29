@@ -468,6 +468,7 @@ import { ref, inject, watch, computed } from "vue";
 import { showTip, showError, askConfirm } from "../utils/dialog";
 import { round, B } from "../utils/bigMath";
 import { api } from "../api";
+import { createTypewriter } from "../utils/typewriter";
 
 const emit = defineEmits(["close"]);
 const store = inject("store");
@@ -479,11 +480,9 @@ const aiExplanation = ref("");
 const aiStreamText = ref(""); // 流式接收的策略分析文本（阶段2）
 const aiStreamStatus = ref(""); // 流式状态文案
 const aiDisplayText = ref(""); // 打字机显示的策略文本
-const aiTypewriterRunning = ref(false);
-// 宏观分析流式状态（阶段1）
-const macroStreamText = ref(""); // 流式接收的宏观分析文本
-const macroDisplayText = ref(""); // 打字机显示的宏观文本
-const macroTypewriterRunning = ref(false);
+// 打字机实例（在 script setup 顶层创建，模板可直接访问 ref）
+const macroTypewriter = createTypewriter(macroDisplayText, macroStreamText);
+const tierTypewriter = createTypewriter(aiDisplayText, aiStreamText);
 const phase = ref(""); // 当前流式阶段：'macro' | 'tier'
 const macroAnalysis = ref(null);
 const backtestSummary = ref(null); // 当前档位参数的历史回测摘要
@@ -737,10 +736,8 @@ watch(
     aiExplanation.value = "";
     aiStreamText.value = "";
     aiDisplayText.value = "";
-    aiTypewriterRunning.value = false;
     macroStreamText.value = "";
     macroDisplayText.value = "";
-    macroTypewriterRunning.value = false;
     phase.value = "";
     aiStreamStatus.value = "";
     macroAnalysis.value = null;
@@ -806,10 +803,8 @@ async function aiRecommend() {
   aiExplanation.value = "";
   aiStreamText.value = "";
   aiDisplayText.value = "";
-  aiTypewriterRunning.value = false;
   macroStreamText.value = "";
   macroDisplayText.value = "";
-  macroTypewriterRunning.value = false;
   macroAnalysis.value = null;
   backtestSummary.value = null;
   fetchingData.value = false;
@@ -818,8 +813,8 @@ async function aiRecommend() {
   aiStreamStatus.value = "";
 
   // 清除旧 timer
-  clearTypewriter("macro");
-  clearTypewriter("tier");
+  macroTypewriter.clear();
+  tierTypewriter.clear();
 
   try {
     // 计算持有天数
@@ -863,7 +858,7 @@ async function aiRecommend() {
         }
         if (event.status === "macro_done") {
           macroDone.value = true;
-          clearTypewriter("macro");
+          macroTypewriter.clear(false);
           macroDisplayText.value = macroStreamText.value; // 显示全部
         }
         continue;
@@ -875,18 +870,14 @@ async function aiRecommend() {
       // 阶段1：宏观分析文本流
       if (event.macroContent) {
         macroStreamText.value += event.macroContent;
-        if (!macroTypewriterRunning.value) {
-          startTypewriter("macro");
-        }
+        macroTypewriter.start()
         continue;
       }
 
       // 阶段2：策略分析文本流
       if (event.content) {
         aiStreamText.value += event.content;
-        if (!aiTypewriterRunning.value) {
-          startTypewriter("tier");
-        }
+        tierTypewriter.start()
         continue;
       }
 
@@ -920,9 +911,10 @@ async function aiRecommend() {
         strategyStyle.value = result.strategyStyle || "";
         macroDone.value = true;
         // 等待两个打字机完成显示
-        clearTypewriter("macro");
+        macroTypewriter.clear(false);
         macroDisplayText.value = macroStreamText.value;
-        await waitForTypewriterDrain("tier");
+        await tierTypewriter.drain()
+        tierTypewriter.clear(false)
         showTip("✅ AI 已结合宏观政策分析推荐完整交易策略");
         break;
       }
@@ -933,54 +925,9 @@ async function aiRecommend() {
     aiRecommending.value = false;
     aiStreamStatus.value = "";
     phase.value = "";
-    clearTypewriter("macro");
-    clearTypewriter("tier");
-    aiTypewriterRunning.value = false;
-    macroTypewriterRunning.value = false;
+    macroTypewriter.clear(false);
+    tierTypewriter.clear(false);
   }
-}
-
-// ===== 双打字机 =====
-const typewriterTimers = { macro: null, tier: null };
-function startTypewriter(name) {
-  const isMacro = name === "macro";
-  if (isMacro) macroTypewriterRunning.value = true;
-  else aiTypewriterRunning.value = true;
-
-  typewriterTimers[name] = setInterval(() => {
-    const src = isMacro ? macroStreamText : aiStreamText;
-    const dst = isMacro ? macroDisplayText : aiDisplayText;
-    if (dst.value.length < src.value.length) {
-      // 自适应步进：积压越多走得越快，避免大段缓冲内容被打字动画拖住
-      const backlog = src.value.length - dst.value.length;
-      const step = backlog > 200 ? 8 : backlog > 80 ? 4 : 2;
-      const next = Math.min(src.value.length, dst.value.length + step);
-      dst.value = src.value.slice(0, next);
-    } else {
-      clearTypewriter(name);
-    }
-  }, 30);
-}
-function clearTypewriter(name) {
-  if (typewriterTimers[name]) {
-    clearInterval(typewriterTimers[name]);
-    typewriterTimers[name] = null;
-  }
-}
-function waitForTypewriterDrain(name) {
-  return new Promise((resolve) => {
-    const isMacro = name === "macro";
-    const src = isMacro ? macroStreamText : aiStreamText;
-    const dst = isMacro ? macroDisplayText : aiDisplayText;
-    const check = () => {
-      if (dst.value.length >= src.value.length) {
-        resolve();
-      } else {
-        setTimeout(check, 50);
-      }
-    };
-    check();
-  });
 }
 
 async function closeWithConfirm() {

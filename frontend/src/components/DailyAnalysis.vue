@@ -214,6 +214,7 @@ import { showTip, askConfirm, showError } from '../utils/dialog'
 import { analyzeFundEnhanced, evaluateWarning, calcSafetyCushion, calcRecoveryNeeded } from '../utils/engine'
 import { B, round, toNum } from '../utils/bigMath'
 import { api } from '../api'
+import { createTypewriter } from '../utils/typewriter'
 
 const emit = defineEmits(['addFund'])
 
@@ -383,53 +384,18 @@ const overallAnalysisTime = ref('')
 const streamConnected = ref(false)
 const reasoningPhase = ref(false)
 
-// ===== 打字机动画（逐字输出） =====
-let typewriterTimer = null
-let typewriterBuffer = ''
-
-function startTypewriter() {
-  stopTypewriter()
-  typewriterTimer = setInterval(() => {
-    if (typewriterBuffer.length === 0) return
-    // 一次取一个字（中文一个字，英文一个字母）
-    const char = typewriterBuffer[0]
-    typewriterBuffer = typewriterBuffer.slice(1)
-    overallAnalysisResult.value += char
-  }, 30)
-}
-
-function stopTypewriter() {
-  if (typewriterTimer) {
-    clearInterval(typewriterTimer)
-    typewriterTimer = null
-  }
-  typewriterBuffer = ''
-}
+// ===== 打字机动画 =====
+const _oaSource = ref('')
+const typewriter = createTypewriter(overallAnalysisResult, _oaSource)
 
 function resetStreamState() {
-  stopTypewriter()
+  typewriter.clear()
   streamConnected.value = false
   reasoningPhase.value = false
 }
 
-function waitForTypewriterDrain(timeoutMs = 30000) {
-  return new Promise((resolve) => {
-    const start = Date.now()
-    const check = () => {
-      if (typewriterBuffer.length === 0) {
-        resolve()
-      } else if (Date.now() - start > timeoutMs) {
-        resolve()  // 超时也结束，避免永久卡住
-      } else {
-        setTimeout(check, 60)
-      }
-    }
-    check()
-  })
-}
-
 onBeforeUnmount(() => {
-  stopTypewriter()
+  typewriter.clear()
 })
 
 async function autoUpdate() {
@@ -569,7 +535,7 @@ async function runOverallAnalysis() {
   overallAnalysisResult.value = ''
   overallAnalysisTime.value = ''
   resetStreamState()
-  startTypewriter()
+  typewriter.start()
   let fullText = ''
   try {
     for await (const event of api.overallAnalysisStream({ portfolioText })) {
@@ -603,11 +569,11 @@ async function runOverallAnalysis() {
       if (event.content) {
         reasoningPhase.value = false  // 思考结束，开始正式回答
         fullText += event.content
-        typewriterBuffer += event.content
+        _oaSource.value += event.content
       }
     }
     // 等待打字机把缓冲吐完
-    await waitForTypewriterDrain()
+    await typewriter.drain()
     if (fullText) {
       overallAnalysisTime.value = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
     }

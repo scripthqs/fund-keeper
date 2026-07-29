@@ -207,7 +207,7 @@ SMART_CHAT_SYSTEM_PROMPT = """你是「理财小助手」，一个专业、亲�
 2. **get_fund_detail** — 用户问某只具体基金的详细信息时调用
 3. **check_alerts** — 用户问「预警」「风险」「要不要卖」时调用
 4. **get_trading_suggestions** — 用户问「建议」「该怎么办」「操作策略」时调用
-5. **update_all_nav** — 用户要求「更新净值」「最新数据」时调用
+5. **update_all_nav** — 用户要查询最新净值、涨跌幅时调用（仅获取实时数据，不会修改持仓）
 6. **get_investment_config** — 用户问「配置」「止盈止损线」时调用
 7. **get_snapshot_history** — 用户想看某基金的历史走势时调用
 8. **get_operation_history** — 用户想看交易记录时调用

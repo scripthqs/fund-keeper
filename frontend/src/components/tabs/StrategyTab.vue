@@ -6,9 +6,6 @@
 
       <!-- 全局默认规则（可折叠，作为每只基金配置的兜底） -->
       <ConfigPanel class="mt-3" />
-
-      <!-- AI 投资顾问 -->
-      <AIChat class="mt-3" />
     </div>
   </van-pull-refresh>
 </template>
@@ -17,7 +14,6 @@
 import { ref, inject } from 'vue'
 import ConfigPanel from '../ConfigPanel.vue'
 import StrategyOverviewPanel from '../StrategyOverviewPanel.vue'
-import AIChat from '../AIChat.vue'
 
 const store = inject('store')
 const refreshing = ref(false)
