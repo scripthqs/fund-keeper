@@ -480,6 +480,8 @@ const aiExplanation = ref("");
 const aiStreamText = ref(""); // 流式接收的策略分析文本（阶段2）
 const aiStreamStatus = ref(""); // 流式状态文案
 const aiDisplayText = ref(""); // 打字机显示的策略文本
+const macroStreamText = ref(""); // 流式接收的宏观分析文本
+const macroDisplayText = ref(""); // 打字机显示的宏观文本
 // 打字机实例（在 script setup 顶层创建，模板可直接访问 ref）
 const macroTypewriter = createTypewriter(macroDisplayText, macroStreamText);
 const tierTypewriter = createTypewriter(aiDisplayText, aiStreamText);

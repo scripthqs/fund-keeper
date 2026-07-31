@@ -171,7 +171,7 @@
                 </div>
               </div>
               <div class="preview-actions">
-                <span class="text-xs" style="color:#12edd7">✅ 已自动应用</span>
+                <span class="text-xs" style="color:var(--text-secondary)">📡 外部实时数据，仅供参考</span>
               </div>
             </div>
 
@@ -252,6 +252,7 @@ function ensureState(fundId) {
       fetchingChange: false,
       fetchResult: '',
       autoFetched: false,
+      previewData: null,
     }
   }
   return fundStates[fundId]
@@ -261,13 +262,15 @@ function ensureState(fundId) {
 function initAllStates() {
   for (const fund of funds.value) {
     const s = ensureState(fund.id)
-    if (s.totalReturn == null) {
+    // 首次加载 或 之前是自动计算的值 → 从 fund 数据重新同步
+    if (s.totalReturn == null || s.autoFilled) {
       if (fund.totalBuyAmount > 0) {
         const profit = B(fund.currentMarketValue || 0).minus(fund.totalBuyAmount).plus(fund.totalSellAmount || 0)
         s.totalReturn = round(profit.div(fund.totalBuyAmount).times(100))
       } else {
         s.totalReturn = fund.currentReturnRate
       }
+      s.autoFilled = true
     }
   }
 }
@@ -409,19 +412,16 @@ async function autoUpdate() {
   try {
     const r = await store.autoUpdateNav()
     updateResult.value = r
-    // 自动应用更新
+    // 预览模式：只展示计算结果，不直接修改数据库
     if (r.results) {
-      let appliedCount = 0
+      let previewCount = 0
       for (const res of r.results) {
         if (!res.success) continue
         const fund = funds.value.find(f => f.id === res.fundId)
         if (!fund) continue
 
-        // 先捕获旧市值（updateFund 后 fund 对象会更新）
         const oldMarketValue = fund.currentMarketValue
-        const oldReturnRate = fund.currentReturnRate
 
-        // 计算今日收益和更新后的市值
         const localProfit = res.todayChange != null
           ? calcProfitFromChange({ currentMarketValue: oldMarketValue }, res.todayChange)
           : null
@@ -430,20 +430,9 @@ async function autoUpdate() {
           : oldMarketValue
         const calcReturnRate = fund.totalBuyAmount > 0
           ? round(B(newMarketVal).minus(fund.totalBuyAmount).plus(fund.totalSellAmount || 0).div(fund.totalBuyAmount).times(100), 2)
-          : oldReturnRate
+          : fund.currentReturnRate
 
-        // 直接更新基金数据
-        try {
-          await store.updateFund(fund.id, buildFullUpdate(fund, {
-            currentMarketValue: newMarketVal,
-            currentReturnRate: calcReturnRate,
-          }))
-        } catch (e) {
-          console.error('自动应用更新失败:', fund.name, e)
-          continue
-        }
-
-        // 同步到 fundStates 显示
+        // 只存预览数据，不写数据库
         const s = ensureState(res.fundId)
         s.todayChange = res.todayChange
         s.todayProfit = localProfit
@@ -456,10 +445,10 @@ async function autoUpdate() {
           calculatedReturnRate: calcReturnRate,
         }
         s.previewTime = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-        appliedCount++
+        previewCount++
       }
-      if (appliedCount > 0) {
-        showTip(`✅ 已自动更新 ${appliedCount} 只基金`)
+      if (previewCount > 0) {
+        showTip(`📊 已获取 ${previewCount} 只基金净值，展开卡片查看预览`)
       }
     }
     // 自动触发 AI 整体组合分析

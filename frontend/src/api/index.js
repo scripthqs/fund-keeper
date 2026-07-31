@@ -171,13 +171,13 @@ export const api = {
   getChatMessages: () => http.get('/chat/messages'),
   clearChatMessages: () => http.delete('/chat/messages'),
   chat: (message, fundContext, history) =>
-    http.post('/chat', { message, fundContext, history }),
+    http.post('/chat', { message, fund_context: fundContext, history }),
   chatStream: (message, fundContext, history) =>
-    fetchSSE('/chat/stream', { message, fundContext, history }),
+    fetchSSE('/chat/stream', { message, fund_context: fundContext, history }),
 
   // 智能对话（支持 Function Calling 自动调用工具）
   chatSmartStream: (message, fundContext, history) =>
-    fetchSSE('/chat/smart/stream', { message, fundContext, history }),
+    fetchSSE('/chat/smart/stream', { message, fund_context: fundContext, history }),
 
   // 情绪
   generateEmotion: (data) => http.post('/emotion', data),

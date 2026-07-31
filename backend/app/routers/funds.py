@@ -383,7 +383,7 @@ async def execute_action(req: ExecuteActionRequest, user_id: str = Depends(_uid)
                 updated["name"],
                 action_type,
                 req.amount,
-                fund["current_return_rate"],
+                updated["current_return_rate"],
                 note,
                 now_str(),
                 snapshot_before,

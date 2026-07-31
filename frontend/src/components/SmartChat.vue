@@ -40,21 +40,6 @@
       <div ref="msgEnd"></div>
     </div>
 
-    <!-- 快捷标签 -->
-    <div class="quick-tags">
-      <button
-        v-for="tag in quickTags"
-        :key="tag.label"
-        class="quick-tag"
-        :class="{ active: tag.label === activeTag }"
-        @click="quickAction(tag)"
-        :disabled="loading"
-      >
-        <span class="tag-icon">{{ tag.icon }}</span>
-        <span class="tag-label">{{ tag.label }}</span>
-      </button>
-    </div>
-
     <!-- 输入区域 -->
     <div class="input-area">
       <div class="input-row">
@@ -62,7 +47,7 @@
           ref="inputEl"
           v-model="input"
           class="chat-input"
-          placeholder="输入消息，或点击下方快捷标签..."
+          placeholder="输入消息，或点击快捷标签..."
           @keydown.enter.exact="send()"
           :disabled="loading"
         />
@@ -78,6 +63,21 @@
         <span @click="clearChat" class="clear-link">🗑 清空</span>
         <span class="fund-count">📊 {{ fundCount }} 只</span>
       </div>
+    </div>
+
+    <!-- 快捷标签 -->
+    <div class="quick-tags">
+      <button
+        v-for="tag in quickTags"
+        :key="tag.label"
+        class="quick-tag"
+        :class="{ active: tag.label === activeTag }"
+        @click="quickAction(tag)"
+        :disabled="loading"
+      >
+        <span class="tag-icon">{{ tag.icon }}</span>
+        <span class="tag-label">{{ tag.label }}</span>
+      </button>
     </div>
   </div>
 </template>
@@ -122,7 +122,6 @@ const quickTags = [
   { icon: '⚠️', label: '风险预警', msg: '检查所有基金的止盈止损预警' },
   { icon: '📊', label: '实时净值', msg: '帮我查一下所有基金的最新净值和涨跌' },
   { icon: '🎯', label: '操作建议', msg: '根据当前持仓给出操作建议' },
-  { icon: '➕', label: '添加基金', msg: '我想添加一只新基金' },
   { icon: '⚙️', label: '投资配置', msg: '查看当前的投资配置' },
   { icon: '📈', label: '走势快照', msg: '帮我看看持仓的近期走势' },
   { icon: '💚', label: '健康评分', msg: '评估一下持仓健康度' },
@@ -172,6 +171,7 @@ async function send(customMsg) {
           get_operation_history: '📜 正在获取历史记录...',
           execute_trade: '💸 正在执行交易...',
           add_fund_quick: '➕ 正在添加基金...',
+          update_fund: '✏️ 正在更新基金数据...',
           get_health_score: '💚 正在评估健康度...',
           get_trading_status: '📅 正在获取交易状态...',
           search_web: '🌐 正在联网搜索...',
@@ -179,8 +179,12 @@ async function send(customMsg) {
         toolStatus.value = labels[toolName] || `🔧 正在调用 ${toolName}...`
       },
       // onToolResult
-      () => {
+      async (toolName) => {
         toolStatus.value = ''
+        // 写库类工具执行后刷新持仓，保持各 Tab 数据同步
+        if (['update_fund', 'execute_trade', 'add_fund_quick'].includes(toolName)) {
+          await store.refreshFunds()
+        }
       }
     )
   } catch (e) {
@@ -264,28 +268,28 @@ onMounted(() => {
 /* 消息行 */
 .msg-row {
   display: flex;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 6px;
   margin-bottom: 12px;
-  padding: 0 4px;
 }
 .msg-row.user { flex-direction: row-reverse; }
 
 .msg-avatar {
-  width: 32px;
-  height: 32px;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  font-size: 13px;
   flex-shrink: 0;
   background: var(--bg-primary);
 }
 
 /* 气泡 */
 .msg-bubble {
-  max-width: 82%;
-  padding: 12px 16px;
+  max-width: calc(100% - 34px);
+  padding: 10px 14px;
   border-radius: 14px;
   font-size: 14px;
   line-height: 1.8;
@@ -438,23 +442,21 @@ html.dark .msg-bubble.assistant :deep(pre) {
   margin: 4px 0;
 }
 
-/* 快捷标签 */
+/* 快捷标签 (3列网格) */
 .quick-tags {
-  display: flex;
-  gap: 6px;
-  padding: 8px 0;
-  overflow-x: auto;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  padding: 6px 0;
   flex-shrink: 0;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
 }
-.quick-tags::-webkit-scrollbar { display: none; }
 
 .quick-tag {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
+  justify-content: center;
+  gap: 3px;
+  padding: 5px 4px;
   border-radius: 16px;
   border: 1px solid rgba(18,237,215,0.25);
   background: var(--bg-primary);
@@ -463,7 +465,6 @@ html.dark .msg-bubble.assistant :deep(pre) {
   white-space: nowrap;
   cursor: pointer;
   transition: all 0.15s;
-  flex-shrink: 0;
 }
 .quick-tag:active, .quick-tag.active {
   background: rgba(18,237,215,0.12);

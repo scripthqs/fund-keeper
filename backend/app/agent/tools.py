@@ -137,6 +137,35 @@ TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
+            "name": "update_fund",
+            "description": "更新已有基金的任意字段。当用户描述某只基金的最新情况或要求修改数据时调用，例如「把xx市值改成5200」「xx基金代码是005827」「xx本金调整为5000」「xx止盈线设为25%」。只需传入要修改的字段，未传字段保持不变。更新后向用户汇报变化。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fund_name": {"type": "string", "description": "要修改的基金名称（支持模糊匹配）"},
+                    "name": {"type": "string", "description": "新的基金名称"},
+                    "fund_code": {"type": "string", "description": "基金代码（6位数字）"},
+                    "initial_principal": {"type": "number", "description": "初始本金（元）"},
+                    "buy_date": {"type": "string", "description": "买入日期（YYYY-MM-DD）"},
+                    "total_buy_amount": {"type": "number", "description": "累计买入金额（元）"},
+                    "total_sell_amount": {"type": "number", "description": "累计卖出金额（元）"},
+                    "current_market_value": {"type": "number", "description": "当前市值（元）"},
+                    "max_investment": {"type": "number", "description": "投入上限（元）"},
+                    "stop_profit_line": {"type": "number", "description": "止盈线（%，如 20 表示 +20%）"},
+                    "stop_loss_line": {"type": "number", "description": "止损线（%，如 -25 表示 -25%）"},
+                    "stop_profit_ratio": {"type": "number", "description": "止盈卖出比例（%）"},
+                    "stop_loss_ratio": {"type": "number", "description": "止损卖出比例（%）"},
+                    "strategy_type": {"type": "string", "enum": ["downside", "pullback"], "description": "加仓策略：downside 越跌越买 | pullback 上涨回调加仓"},
+                    "add_tiers": {"type": "array", "items": {"type": "object", "properties": {"line": {"type": "number"}, "ratio": {"type": "number"}}, "required": ["line", "ratio"]}, "description": "下跌加仓档位列表"},
+                    "pullback_tiers": {"type": "array", "items": {"type": "object", "properties": {"line": {"type": "number"}, "ratio": {"type": "number"}}, "required": ["line", "ratio"]}, "description": "上涨回调加仓档位列表"},
+                },
+                "required": ["fund_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_health_score",
             "description": "获取持仓健康度评分，包括各基金评分和综合评分",
             "parameters": {"type": "object", "properties": {}, "required": []},
@@ -445,8 +474,11 @@ def tool_update_all_nav(user_id: str) -> str:
                 est_change = info.get("estimated_change")
 
                 if est_change is not None and old_mv > 0:
-                    new_mv = round(old_mv * (1 + est_change / 100), 2)
-                    profit = round(new_mv - old_mv, 2)
+                    # 与前端的 calcProfitFromChange 保持一致：
+                    # change% 是相对于昨日净值的，old_mv 是当前最新市值，
+                    # 所以 profit = old_mv × change / (100 + change)
+                    profit = round(old_mv * est_change / (100 + est_change), 2)
+                    new_mv = round(old_mv + profit, 2)
                     results.append(
                         f"{'🟢' if profit >= 0 else '🔴'} **{f['name']}**："
                         f"¥{_fmt(old_mv)} → ¥{_fmt(new_mv)} "
@@ -608,7 +640,7 @@ def tool_execute_trade(user_id: str, fund_name: str, action: str, amount: float,
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 history_id, today_str(), updated["name"], action_type,
-                amount, f["current_return_rate"], note or f"AI助手{action_cn}",
+                amount, updated["current_return_rate"], note or f"AI助手{action_cn}",
                 now_str(), snapshot_before, user_id,
             ),
         )
@@ -677,6 +709,154 @@ def tool_add_fund_quick(
         f"📈 收益率：{rate:+.2f}%\n"
         f"📅 买入日期：{buy_date}\n\n"
         f"提示：你可以继续问我「{name}该设置什么加仓档位」来优化策略。"
+    )
+
+
+def _match_fund(funds: List[dict], name: str):
+    """精确优先匹配基金；多个包含匹配时返回 (None, 候选列表)，无匹配返回 (None, [])"""
+    nl = name.strip().lower()
+    if not nl:
+        return None, []
+    for f in funds:
+        if f["name"].lower() == nl:
+            return f, []
+    partial = [f for f in funds if nl in f["name"].lower()]
+    if len(partial) == 1:
+        return partial[0], []
+    if len(partial) > 1:
+        return None, partial
+    return None, []
+
+
+def tool_update_fund(
+    user_id: str,
+    fund_name: str,
+    name: Optional[str] = None,
+    fund_code: Optional[str] = None,
+    initial_principal: Optional[float] = None,
+    buy_date: Optional[str] = None,
+    total_buy_amount: Optional[float] = None,
+    total_sell_amount: Optional[float] = None,
+    current_market_value: Optional[float] = None,
+    max_investment: Optional[float] = None,
+    stop_profit_line: Optional[float] = None,
+    stop_loss_line: Optional[float] = None,
+    stop_profit_ratio: Optional[float] = None,
+    stop_loss_ratio: Optional[float] = None,
+    strategy_type: Optional[str] = None,
+    add_tiers: Optional[List[dict]] = None,
+    pullback_tiers: Optional[List[dict]] = None,
+) -> str:
+    """✏️ 更新已有基金字段（部分更新，只改传入的字段）"""
+    funds = _get_funds(user_id)
+    f, candidates = _match_fund(funds, fund_name)
+    if not f:
+        if candidates:
+            hint = "、".join(c["name"] for c in candidates[:8])
+            return f"❌ 「{fund_name}」匹配到多只基金：{hint}。请用更准确的名称重试。"
+        if funds:
+            hint = "、".join(x["name"] for x in funds[:8])
+            return f"❌ 未找到名为「{fund_name}」的基金。你目前的基金有：{hint}。"
+        return f"❌ 未找到名为「{fund_name}」的基金，当前没有任何持仓。可以先说「添加基金」新增。"
+
+    # 参数名 -> DB 列名 的白名单映射（列名硬编码，值参数化，防注入）
+    field_map = {
+        "name": name,
+        "fund_code": fund_code,
+        "initial_principal": initial_principal,
+        "buy_date": buy_date,
+        "total_buy_amount": total_buy_amount,
+        "total_sell_amount": total_sell_amount,
+        "current_market_value": current_market_value,
+        "max_investment": max_investment,
+        "stop_profit_line": stop_profit_line,
+        "stop_loss_line": stop_loss_line,
+        "stop_profit_ratio": stop_profit_ratio,
+        "stop_loss_ratio": stop_loss_ratio,
+        "strategy_type": strategy_type,
+    }
+    labels = {
+        "name": "名称", "fund_code": "基金代码", "initial_principal": "初始本金",
+        "buy_date": "买入日期", "total_buy_amount": "累计买入", "total_sell_amount": "累计卖出",
+        "current_market_value": "当前市值", "max_investment": "投入上限",
+        "stop_profit_line": "止盈线", "stop_loss_line": "止损线",
+        "stop_profit_ratio": "止盈卖出比例", "stop_loss_ratio": "止损卖出比例",
+        "strategy_type": "策略类型",
+    }
+
+    def _disp(v):
+        if isinstance(v, (int, float)):
+            return _fmt(v)
+        return v if v not in (None, "") else "未设置"
+
+    def _fmt_tiers(tiers):
+        if not tiers:
+            return "无"
+        return " | ".join(f"{t.get('line')}%->买{t.get('ratio')}%" for t in tiers)
+
+    updates = {}   # DB 列名 -> 值
+    changes = []   # 人类可读变化
+
+    for col, val in field_map.items():
+        if val is None:
+            continue
+        old = f.get(col)
+        updates[col] = val
+        changes.append(f"{labels.get(col, col)}：{_disp(old)} -> {_disp(val)}")
+
+    # JSON 档位字段单独处理
+    if add_tiers is not None:
+        try:
+            old_tiers = json.loads(f.get("add_tiers", "") or "[]")
+        except (json.JSONDecodeError, TypeError):
+            old_tiers = []
+        updates["add_tiers"] = json.dumps(add_tiers, ensure_ascii=False)
+        changes.append(f"加仓档位：{_fmt_tiers(old_tiers)} -> {_fmt_tiers(add_tiers)}")
+    if pullback_tiers is not None:
+        try:
+            old_tiers = json.loads(f.get("pullback_tiers", "") or "[]")
+        except (json.JSONDecodeError, TypeError):
+            old_tiers = []
+        updates["pullback_tiers"] = json.dumps(pullback_tiers, ensure_ascii=False)
+        changes.append(f"回调加仓档位：{_fmt_tiers(old_tiers)} -> {_fmt_tiers(pullback_tiers)}")
+
+    if not updates:
+        return f"⚠️ 没有指定要更新的字段。请告诉我要修改「{f['name']}」的哪些数据（如市值、本金、代码、止盈线等）。"
+
+    conn = get_db()
+    try:
+        set_clauses = ", ".join(f"{col}=?" for col in updates.keys())
+        conn.execute(
+            f"UPDATE funds SET {set_clauses} WHERE id=?",
+            list(updates.values()) + [f["id"]],
+        )
+
+        # 涉及市值/买卖金额时自动重算收益率
+        recalc = {"current_market_value", "total_buy_amount", "total_sell_amount", "initial_principal"}
+        final = dict(conn.execute("SELECT * FROM funds WHERE id=?", (f["id"],)).fetchone())
+        if recalc & updates.keys():
+            buy = final["total_buy_amount"] or 0
+            if buy > 0:
+                new_rate = round(
+                    ((final["current_market_value"] or 0) - buy + (final["total_sell_amount"] or 0)) / buy * 100, 2
+                )
+                conn.execute("UPDATE funds SET current_return_rate=? WHERE id=?", (new_rate, f["id"]))
+                final["current_return_rate"] = new_rate
+                changes.append(f"收益率（自动重算）：{f.get('current_return_rate', 0) or 0:+.2f}% -> {new_rate:+.2f}%")
+            else:
+                changes.append("⚠️ 累计买入为 0，无法计算收益率")
+
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        return f"❌ 更新失败：{e}"
+    finally:
+        conn.close()
+
+    return (
+        f"✅ **{final['name']} 已更新！**\n\n"
+        + "\n".join(f"• {c}" for c in changes)
+        + f"\n\n当前市值：¥{_fmt(final['current_market_value'] or 0)} | 收益率：{final.get('current_return_rate', 0) or 0:+.2f}%"
     )
 
 
@@ -1008,6 +1188,7 @@ TOOL_MAP = {
     "get_operation_history": tool_get_operation_history,
     "execute_trade": tool_execute_trade,
     "add_fund_quick": tool_add_fund_quick,
+    "update_fund": tool_update_fund,
     "get_health_score": tool_get_health_score,
     "get_trading_status": tool_get_trading_status,
     "search_web": tool_search_web,

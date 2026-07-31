@@ -43,24 +43,15 @@ function _resetLoadFlags() {
 
 /** 加载基金列表 + 配置（被多个 tab 共用） */
 async function loadFundsAndConfig() {
-  const needFunds = !_fundsLoaded.value
-  const needConfig = !_configLoaded.value
-  if (!needFunds && !needConfig) return
-
   const promises = []
-  if (needFunds) promises.push(api.getFunds().catch(() => []))
-  if (needConfig) promises.push(api.getConfig().catch(() => ({ ...DEFAULT_CONFIG })))
+  promises.push(api.getFunds().catch((e) => { console.error('loadFundsAndConfig getFunds 失败:', e); return null }))
+  promises.push(api.getConfig().catch(() => ({ ...DEFAULT_CONFIG })))
 
   const results = await Promise.all(promises)
-  let ri = 0
-  if (needFunds) {
-    funds.value = results[ri++]
-    _fundsLoaded.value = true
+  if (results[0] !== null) {
+    funds.value = results[0]
   }
-  if (needConfig) {
-    Object.assign(config, DEFAULT_CONFIG, results[ri])
-    _configLoaded.value = true
-  }
+  Object.assign(config, DEFAULT_CONFIG, results[1])
 }
 
 /** 加载快照（仅持仓 tab 需要） */
@@ -214,7 +205,17 @@ async function loadAll() {
   }
 }
 
-async function refreshFunds() { try { funds.value = await api.getFunds() } catch (e) { console.error('刷新基金列表失败:', e) } }
+async function refreshFunds() {
+  try {
+    const data = await api.getFunds()
+    funds.value = data
+    // 不设置 _fundsLoaded = true，避免与 loadForTab 的刷新竞态
+    // 下次 loadForTab 调用时仍会确保拿到最新数据
+    console.log('[refreshFunds] 基金数据已刷新,', data.length, '只')
+  } catch (e) {
+    console.error('刷新基金列表失败:', e)
+  }
+}
 async function createFund(data) { await api.createFund(data); await refreshFunds() }
 async function updateFund(id, data) { await api.updateFund(id, data); await refreshFunds() }
 async function removeFund(id) { await api.deleteFund(id); await refreshFunds() }
@@ -341,7 +342,7 @@ async function sendSmartMessage(message, fundContext, onChunk, onToolCall, onToo
       if (event.tool_call && onToolCall) onToolCall(event.tool_call, event.tool_args)
       // 工具结果事件：只通知回调，不混入AI回复
       if (event.tool_result) {
-        if (onToolResult) onToolResult(event.tool_result, event.content)
+        if (onToolResult) await onToolResult(event.tool_result, event.content)
         continue
       }
       if (event.content) {

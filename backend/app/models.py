@@ -117,7 +117,7 @@ class HistoryCreate(BaseModel):
     return_rate: float = Field(0, alias="returnRate")
     note: str = ""
 
-    model_config = {"by_alias": True}
+    model_config = {"populate_by_name": True, "by_alias": True}
 
 
 class HistoryOut(HistoryCreate):
@@ -190,7 +190,7 @@ class SnapshotCreate(BaseModel):
     daily_profit: float = Field(0, alias="dailyProfit")
     nav: float = Field(0, alias="nav")
 
-    model_config = {"by_alias": True}
+    model_config = {"populate_by_name": True, "by_alias": True}
 
 
 class SnapshotOut(SnapshotCreate):
