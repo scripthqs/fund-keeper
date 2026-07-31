@@ -332,10 +332,18 @@
             </div>
             <div class="tier-grid p-3 flex flex-col gap-2" :key="tierKey">
               <div
-                v-for="i in form.addTiers.length"
-                :key="i"
-                class="flex items-center gap-2"
+                v-if="!form.addTiers.length"
+                class="text-center py-4 text-sm"
+                style="color: var(--text-secondary); line-height: 1.8"
               >
+                💡 尚未配置加仓档位<br />请点击上方「🤖 AI 推荐」按钮自动生成
+              </div>
+              <template v-else>
+                <div
+                  v-for="i in form.addTiers.length"
+                  :key="i"
+                  class="flex items-center gap-2"
+                >
                 <van-field
                   v-model.number="form.addTiers[i - 1].line"
                   :label="`第${i}档(%)`"
@@ -351,6 +359,7 @@
                   class="flex-1"
                 />
               </div>
+              </template>
             </div>
 
             <!-- 上涨回调加仓策略 -->
@@ -441,7 +450,7 @@
               class="px-3 pb-3 text-xs text-right"
               style="color: var(--text-secondary)"
             >
-              填 0 则使用全局配置 | AI 推荐会一并生成
+              点击上方 AI 推荐可一并生成，也可手动填写
             </div>
           </van-cell-group>
           <div class="flex gap-2 mt-4">
@@ -509,19 +518,9 @@ const formRef = ref(null);
 const minDate = new Date(2000, 0, 1);
 const maxDate = new Date();
 
-const defaultTiers = () => [
-  { line: -8, ratio: 5 },
-  { line: -12, ratio: 10 },
-  { line: -17, ratio: 18 },
-  { line: -22, ratio: 28 },
-];
+const defaultTiers = () => [];
 
-const defaultPullbackTiers = () => [
-  { line: -3, ratio: 5 },
-  { line: -6, ratio: 10 },
-  { line: -10, ratio: 20 },
-  { line: -15, ratio: 35 },
-];
+const defaultPullbackTiers = () => [];
 
 // 新建基金默认档位（与默认策略一致，可按需修改）
 
@@ -539,10 +538,10 @@ const form = ref({
   addTiers: defaultTiers(),
   strategyType: "downside",
   pullbackTiers: [],
-  stopProfitLine: 0,
-  stopLossLine: 0,
-  stopProfitRatio: 0,
-  stopLossRatio: 0,
+  stopProfitLine: undefined,
+  stopLossLine: undefined,
+  stopProfitRatio: undefined,
+  stopLossRatio: undefined,
 });
 
 /** 编辑模式下表单初始快照，用于检测是否有实际修改 */
@@ -770,10 +769,10 @@ watch(
           pullbackTiers: fund.pullbackTiers?.length
             ? [...fund.pullbackTiers]
             : [],
-          stopProfitLine: fund.stopProfitLine ?? 0,
-          stopLossLine: fund.stopLossLine ?? 0,
-          stopProfitRatio: fund.stopProfitRatio ?? 0,
-          stopLossRatio: fund.stopLossRatio ?? 0,
+          stopProfitLine: fund.stopProfitLine ?? undefined,
+          stopLossLine: fund.stopLossLine ?? undefined,
+          stopProfitRatio: fund.stopProfitRatio ?? undefined,
+          stopLossRatio: fund.stopLossRatio ?? undefined,
         });
         // 编辑模式：保存初始快照，用于后续检测是否有实际修改
         formSnapshot.value = JSON.parse(JSON.stringify(form.value));
@@ -793,10 +792,10 @@ watch(
         addTiers: defaultTiers(),
         strategyType: "downside",
         pullbackTiers: [],
-        stopProfitLine: 0,
-        stopLossLine: 0,
-        stopProfitRatio: 0,
-        stopLossRatio: 0,
+        stopProfitLine: undefined,
+        stopLossLine: undefined,
+        stopProfitRatio: undefined,
+        stopLossRatio: undefined,
       });
       // 新增模式：清空快照，使用 hasFormData 的增量检查逻辑
       formSnapshot.value = null;

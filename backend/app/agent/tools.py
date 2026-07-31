@@ -121,7 +121,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "add_fund_quick",
-            "description": "快速添加一只新基金。AI应先收集用户提供的基金信息，然后调用此工具。至少需要名称和本金",
+            "description": "快速添加一只新基金。AI应先收集用户提供的基金信息，然后调用此工具。至少需要名称和本金。添加后建议主动询问是否需要AI推荐加仓档位和止盈止损配置",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -131,8 +131,30 @@ TOOL_DEFINITIONS = [
                     "market_value": {"type": "number", "description": "当前市值（元），不知道则填与本金相同"},
                     "buy_amount": {"type": "number", "description": "累计买入金额（元），不知道则填与本金相同"},
                     "buy_date": {"type": "string", "description": "买入日期（YYYY-MM-DD），不填则用今天"},
+                    "max_investment": {"type": "number", "description": "投入上限（元），不填则默认为本金的2倍"},
+                    "stop_profit_line": {"type": "number", "description": "止盈线（%，如 20 表示 +20%），不填由全局配置决定"},
+                    "stop_loss_line": {"type": "number", "description": "止损线（%，如 -25 表示 -25%），不填由全局配置决定"},
+                    "stop_profit_ratio": {"type": "number", "description": "止盈卖出比例（%），不填由全局配置决定"},
+                    "stop_loss_ratio": {"type": "number", "description": "止损卖出比例（%），不填由全局配置决定"},
+                    "strategy_type": {"type": "string", "enum": ["downside", "pullback"], "description": "加仓策略：downside 越跌越买 | pullback 上涨回调加仓，默认 downside"},
+                    "add_tiers": {"type": "array", "items": {"type": "object", "properties": {"line": {"type": "number"}, "ratio": {"type": "number"}}, "required": ["line", "ratio"]}, "description": "下跌加仓档位列表，如 [{\"line\":-8,\"ratio\":5},{\"line\":-13,\"ratio\":10}]。不填则为空"},
+                    "pullback_tiers": {"type": "array", "items": {"type": "object", "properties": {"line": {"type": "number"}, "ratio": {"type": "number"}}, "required": ["line", "ratio"]}, "description": "上涨回调加仓档位列表，不填则为空"},
                 },
                 "required": ["name", "principal"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "recommend_fund_strategy",
+            "description": "为指定基金AI生成个性化的加仓档位和止盈止损推荐。当用户说「帮我配置xx基金的档位」「xx基金该怎么加仓」「给xx推荐止盈止损」「xx基金加仓策略」时调用。该工具会调用AI分析基金数据并返回具体的档位数值和止盈止损建议。生成推荐后，应主动询问用户是否要将推荐结果写入基金",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fund_name": {"type": "string", "description": "要推荐的基金名称"},
+                },
+                "required": ["fund_name"],
             },
         },
     },
@@ -795,14 +817,24 @@ def tool_add_fund_quick(
     market_value: float = 0,
     buy_amount: float = 0,
     buy_date: str = "",
+    max_investment: float = 0,
+    stop_profit_line: Optional[float] = None,
+    stop_loss_line: Optional[float] = None,
+    stop_profit_ratio: Optional[float] = None,
+    stop_loss_ratio: Optional[float] = None,
+    strategy_type: str = "downside",
+    add_tiers: Optional[List[dict]] = None,
+    pullback_tiers: Optional[List[dict]] = None,
 ) -> str:
-    """➕ 快速添加基金"""
+    """➕ 快速添加基金（支持独立档位和止盈止损配置）"""
     if market_value <= 0:
         market_value = principal
     if buy_amount <= 0:
         buy_amount = principal
     if not buy_date:
         buy_date = today_str()
+    if max_investment <= 0:
+        max_investment = principal * 2
 
     fid = gen_id()
     now = now_str()
@@ -812,31 +844,56 @@ def tool_add_fund_quick(
     total_sell = 0.0
     rate = round((market_value - total_buy + total_sell) / total_buy * 100, 2) if total_buy > 0 else 0
 
+    # 序列化档位
+    add_tiers_json = json.dumps(add_tiers or [], ensure_ascii=False)
+    pullback_tiers_json = json.dumps(pullback_tiers or [], ensure_ascii=False)
+
     conn = get_db()
     conn.execute(
         """INSERT INTO funds (id, name, fund_code, initial_principal, buy_date,
            total_buy_amount, total_sell_amount, current_market_value, current_return_rate,
-           max_investment, add_tiers, strategy_type, created_at, user_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           max_investment, add_tiers, pullback_tiers, strategy_type,
+           stop_profit_line, stop_loss_line, stop_profit_ratio, stop_loss_ratio,
+           created_at, user_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             fid, name, code, principal, buy_date,
             total_buy, total_sell, market_value, rate,
-            principal * 2, "[]", "downside", now, user_id,
+            max_investment, add_tiers_json, pullback_tiers_json, strategy_type,
+            stop_profit_line or 0, stop_loss_line or 0,
+            stop_profit_ratio or 0, stop_loss_ratio or 0,
+            now, user_id,
         ),
     )
     conn.commit()
     conn.close()
 
-    return (
-        f"✅ **基金添加成功！**\n\n"
-        f"📛 名称：{name}\n"
-        f"🔢 代码：{code or '未设置'}\n"
-        f"💰 本金：¥{_fmt(principal)}\n"
-        f"📊 市值：¥{_fmt(market_value)}\n"
-        f"📈 收益率：{rate:+.2f}%\n"
-        f"📅 买入日期：{buy_date}\n\n"
-        f"提示：你可以继续问我「{name}该设置什么加仓档位」来优化策略。"
-    )
+    # 构建返回消息
+    lines = [
+        f"✅ **基金添加成功！**\n",
+        f"📛 名称：{name}",
+        f"🔢 代码：{code or '未设置'}",
+        f"💰 本金：¥{_fmt(principal)}",
+        f"📊 市值：¥{_fmt(market_value)}",
+        f"📈 收益率：{rate:+.2f}%",
+        f"📅 买入日期：{buy_date}",
+        f"🎯 投入上限：¥{_fmt(max_investment)}",
+    ]
+    if add_tiers:
+        tier_strs = []
+        for t in add_tiers:
+            tier_strs.append("{}%→买{}%".format(t.get("line"), t.get("ratio")))
+        lines.append("📉 加仓档位：" + " | ".join(tier_strs))
+    else:
+        lines.append("📉 加仓档位：未配置（可调用 recommend_fund_strategy 推荐）")
+    if stop_profit_line:
+        lines.append(f"🎯 止盈线：+{stop_profit_line}%（卖出{stop_profit_ratio or '?'}%）")
+    if stop_loss_line:
+        lines.append(f"🛑 止损线：{stop_loss_line}%（卖出{stop_loss_ratio or '?'}%）")
+    if not stop_profit_line and not stop_loss_line:
+        lines.append("⚠️ 止盈止损：未配置（使用全局配置，可调用 recommend_fund_strategy 推荐）")
+
+    return "\n".join(lines)
 
 
 def _match_fund(funds: List[dict], name: str):
@@ -853,6 +910,78 @@ def _match_fund(funds: List[dict], name: str):
     if len(partial) > 1:
         return None, partial
     return None, []
+
+
+def tool_recommend_fund_strategy(user_id: str, fund_name: str) -> str:
+    """🤖 AI 推荐基金加仓档位和止盈止损"""
+    from app.agent.tiers import recommend_add_tiers as _ai_recommend
+
+    funds = _get_funds(user_id)
+    f = _find_fund(funds, fund_name)
+    if not f:
+        return f"❌ 未找到名为「{fund_name}」的基金。请先添加基金或检查名称。当前持仓：{'、'.join(x['name'] for x in funds[:8])}" if funds else "❌ 当前没有任何持仓，请先添加基金。"
+
+    initial = f["initial_principal"] or 0
+    total_buy = f["total_buy_amount"] or 0
+    mv = f["current_market_value"] or 0
+    rate = _calc_return_rate(f)
+    days = _days_held(f.get("buy_date", ""))
+    max_inv = f.get("max_investment") or 0
+
+    if initial <= 0:
+        return "❌ 该基金未设置初始本金，无法生成推荐。请先使用 update_fund 设置初始本金。"
+
+    try:
+        result = _ai_recommend(
+            fund_name=f["name"],
+            total_buy_amount=total_buy,
+            initial_principal=initial,
+            max_investment=max_inv,
+            current_return_rate=rate,
+            current_market_value=mv,
+            hold_days=days,
+        )
+    except Exception as e:
+        logger.error("AI推荐档位失败: %s", e)
+        return f"❌ AI 推荐失败：{e}。请稍后重试或手动设置档位。"
+
+    tiers = result.get("tiers", [])
+    pullback_tiers = result.get("pullbackTiers", [])
+    sp_line = result.get("stopProfitLine", 0)
+    sl_line = result.get("stopLossLine", 0)
+    sp_ratio = result.get("stopProfitRatio", 0)
+    sl_ratio = result.get("stopLossRatio", 0)
+    strategy_type = result.get("strategyType", "downside")
+    style = result.get("strategyStyle", "标准策略")
+    explanation = result.get("explanation", "")
+
+    lines = [
+        f"🤖 **{f['name']} AI 策略推荐**（{style}）\n",
+        f"📊 当前数据：本金 ¥{_fmt(initial)} | 市值 ¥{_fmt(mv)} | 收益率 {rate:+.2f}% | 持有 {days}天",
+        f"📈 策略类型：{'上涨回调加仓' if strategy_type == 'pullback' else '越跌越买（金字塔）'}",
+        "",
+    ]
+
+    if tiers:
+        lines.append("**📉 加仓档位：**")
+        for i, t in enumerate(tiers):
+            lines.append(f"  第{i+1}档：跌至 {t['line']}% → 买入 {t['ratio']}%")
+    if pullback_tiers:
+        lines.append("**📈 回调加仓档位：**")
+        for i, t in enumerate(pullback_tiers):
+            lines.append(f"  第{i+1}档：回调 {t['line']}% → 买入 {t['ratio']}%")
+
+    lines.append("")
+    lines.append("**🎯 止盈止损：**")
+    lines.append(f"  止盈线：+{sp_line}%（卖出 {sp_ratio}%）" if sp_line else "  止盈线：未设置")
+    lines.append(f"  止损线：{sl_line}%（卖出 {sl_ratio}%）" if sl_line else "  止损线：未设置")
+
+    if explanation:
+        lines.append(f"\n💡 {explanation}")
+
+    lines.append(f"\n⚠️ 以上为 AI 推荐结果，尚未写入数据库。如需应用，请告诉我「把推荐写入 {f['name']}」，我会调用 update_fund 保存。")
+
+    return "\n".join(lines)
 
 
 def tool_update_fund(
@@ -1317,6 +1446,7 @@ TOOL_MAP = {
     "get_operation_history": tool_get_operation_history,
     "execute_trade": tool_execute_trade,
     "add_fund_quick": tool_add_fund_quick,
+    "recommend_fund_strategy": tool_recommend_fund_strategy,
     "update_fund": tool_update_fund,
     "get_health_score": tool_get_health_score,
     "get_trading_status": tool_get_trading_status,
