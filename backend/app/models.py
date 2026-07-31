@@ -23,6 +23,7 @@ class FundBase(BaseModel):
     total_sell_amount: float = Field(0, alias="totalSellAmount")
     current_market_value: float = Field(0, alias="currentMarketValue")
     current_return_rate: float = Field(0, alias="currentReturnRate")
+    total_shares: float = Field(0, alias="totalShares")
     max_investment: float = Field(0, alias="maxInvestment")
     add_tiers: List[AddTier] = Field(default_factory=list, alias="addTiers")
     strategy_type: str = Field("downside", alias="strategyType")  # "downside" 越跌越买 | "pullback" 上涨回调加仓
@@ -47,6 +48,7 @@ class FundUpdate(FundBase):
 class FundOut(FundBase):
     id: str
     last_nav_update: str = Field("", alias="lastNavUpdate")
+    yesterday_nav: float = Field(0, alias="yesterdayNav")
 
 
 # ==================== 配置 ====================
@@ -96,6 +98,9 @@ class AutoUpdateResult(BaseModel):
     today_change: Optional[float] = Field(None, alias="todayChange")
     today_profit: Optional[float] = Field(None, alias="todayProfit")
     calculated_return_rate: Optional[float] = Field(None, alias="calculatedReturnRate")
+    total_shares: float = Field(0, alias="totalShares")
+    nav: float = Field(0, alias="nav")
+    nav_date: str = Field("", alias="navDate")
     message: str = ""
 
 

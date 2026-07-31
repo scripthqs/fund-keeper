@@ -119,6 +119,14 @@
             />
 
             <van-field
+              v-model.number="form.totalShares"
+              name="totalShares"
+              label="持有份额 (份)"
+              type="number"
+              placeholder="从支付宝等平台查看精确份额"
+            />
+
+            <van-field
               :model-value="fmtReturnRate"
               name="currentReturnRate"
               label="总收益率 (%)"
@@ -525,6 +533,7 @@ const form = ref({
   currentMarketValue: 0,
   totalBuyAmount: 0,
   totalSellAmount: 0,
+  totalShares: 0,
   currentReturnRate: 0,
   maxInvestment: undefined,
   addTiers: defaultTiers(),

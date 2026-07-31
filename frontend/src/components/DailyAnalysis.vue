@@ -88,6 +88,7 @@
                 @click="autoFetchTodayChange(fund)"
               >🛰️ 获取今日涨跌幅</van-button>
               <div v-if="fundStates[fund.id]?.fetchResult" class="text-xs mt-1 px-1" :style="{ color: fundStates[fund.id]?.fetchResult.includes('成功') ? '#12edd7' : '#ff9800' }">{{ fundStates[fund.id]?.fetchResult }}</div>
+              <div class="text-xs mt-1 px-1" style="color:var(--text-secondary)">💡 盘中参考估值，22:00 自动更新使用实际结算净值</div>
             </div>
 
             <!-- 今日收益 & 总收益率卡片 -->
@@ -154,6 +155,14 @@
               </div>
               <div class="preview-body">
                 <div class="preview-row">
+                  <span>持有份额</span>
+                  <span style="color:var(--text-secondary)">{{ fmtNum(fundStates[fund.id]?.previewData.totalShares || 0) }} 份</span>
+                </div>
+                <div class="preview-row">
+                  <span>当前NAV</span>
+                  <span style="color:var(--text-secondary)">{{ fundStates[fund.id]?.previewData.nav || '--' }}</span>
+                </div>
+                <div class="preview-row">
                   <span>当前市值</span>
                   <span style="color:var(--text-secondary)">¥{{ fmtNum(fundStates[fund.id]?.previewData.oldMarketValue) }}</span>
                 </div>
@@ -171,7 +180,7 @@
                 </div>
               </div>
               <div class="preview-actions">
-                <span class="text-xs" style="color:var(--text-secondary)">📡 外部实时数据，仅供参考</span>
+                <span class="text-xs" style="color:var(--text-secondary)">📡 净值来自东方财富结算数据，收益采用份额×净值差精确计算</span>
               </div>
             </div>
 
@@ -314,22 +323,41 @@ function profitRateOf(fund) {
   return round(B(profit).div(fund.totalBuyAmount).times(100))
 }
 
-/** 根据涨跌幅推算今日收益 */
+/** 根据涨跌幅推算今日收益（支持份额模式） */
 function calcProfitFromChange(fund, change) {
-  if (fund && change != null && !isNaN(change) && fund.currentMarketValue > 0) {
-    const denom = toNum(B(100).plus(change))
-    if (denom <= 0) return null
-    return round(B(fund.currentMarketValue).times(change).div(denom))
+  if (fund && change != null && !isNaN(change)) {
+    // 份额模式：有 totalShares 时用更精确的公式
+    if (fund.totalShares > 0 && fund.currentMarketValue > 0) {
+      const todayNav = fund.currentMarketValue / fund.totalShares
+      const yesterdayNav = todayNav / (1 + change / 100)
+      return round(B(fund.totalShares).times(B(todayNav).minus(yesterdayNav)))
+    }
+    // 传统模式
+    if (fund.currentMarketValue > 0) {
+      const denom = toNum(B(100).plus(change))
+      if (denom <= 0) return null
+      return round(B(fund.currentMarketValue).times(change).div(denom))
+    }
   }
   return null
 }
 
-/** 根据今日收益反推涨跌幅 */
+/** 根据今日收益反推涨跌幅（支持份额模式） */
 function calcChangeFromProfit(fund, profit) {
-  if (fund && profit != null && !isNaN(profit) && fund.currentMarketValue > 0) {
-    const yesterdayValue = toNum(B(fund.currentMarketValue).minus(profit))
-    if (yesterdayValue <= 0) return null
-    return round(B(profit).div(yesterdayValue).times(100), 4)
+  if (fund && profit != null && !isNaN(profit)) {
+    // 份额模式
+    if (fund.totalShares > 0 && fund.currentMarketValue > 0) {
+      const todayNav = fund.currentMarketValue / fund.totalShares
+      const yesterdayNav = todayNav - profit / fund.totalShares
+      if (yesterdayNav <= 0) return null
+      return round(B(todayNav - yesterdayNav).div(yesterdayNav).times(100), 4)
+    }
+    // 传统模式
+    if (fund.currentMarketValue > 0) {
+      const yesterdayValue = toNum(B(fund.currentMarketValue).minus(profit))
+      if (yesterdayValue <= 0) return null
+      return round(B(profit).div(yesterdayValue).times(100), 4)
+    }
   }
   return null
 }
@@ -426,27 +454,36 @@ async function autoUpdate() {
 
         const oldMarketValue = fund.currentMarketValue
 
-        const localProfit = res.todayChange != null
-          ? calcProfitFromChange({ currentMarketValue: oldMarketValue }, res.todayChange)
-          : null
-        const newMarketVal = localProfit != null
-          ? round(B(oldMarketValue).plus(localProfit))
-          : oldMarketValue
-        const calcReturnRate = fund.totalBuyAmount > 0
-          ? round(B(newMarketVal).minus(fund.totalBuyAmount).plus(fund.totalSellAmount || 0).div(fund.totalBuyAmount).times(100), 2)
-          : fund.currentReturnRate
+        // 优先使用服务端返回的份额计算结果（精确），否则客户端估算
+        const hasServerCalc = res.todayProfit != null && res.todayProfit !== 0
+        const todayProfit = hasServerCalc ? res.todayProfit : (
+          res.todayChange != null
+            ? calcProfitFromChange({ currentMarketValue: oldMarketValue, totalShares: res.totalShares }, res.todayChange)
+            : null
+        )
+        const newMarketVal = res.newMarketValue > 0 ? res.newMarketValue : (
+          todayProfit != null ? round(B(oldMarketValue).plus(todayProfit)) : oldMarketValue
+        )
+        const calcReturnRate = res.calculatedReturnRate != null ? res.calculatedReturnRate : (
+          fund.totalBuyAmount > 0
+            ? round(B(newMarketVal).minus(fund.totalBuyAmount).plus(fund.totalSellAmount || 0).div(fund.totalBuyAmount).times(100), 2)
+            : fund.currentReturnRate
+        )
 
         // 只存预览数据，不写数据库
         const s = ensureState(res.fundId)
         s.todayChange = res.todayChange
-        s.todayProfit = localProfit
+        s.todayProfit = todayProfit
         s.totalReturn = calcReturnRate
         s.previewData = {
           oldMarketValue: oldMarketValue,
           newMarketValue: newMarketVal,
           todayChange: res.todayChange,
-          todayProfit: localProfit,
+          todayProfit: todayProfit,
           calculatedReturnRate: calcReturnRate,
+          totalShares: res.totalShares || 0,
+          nav: res.nav || 0,
+          navDate: res.navDate || '',
         }
         s.previewTime = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
         previewCount++

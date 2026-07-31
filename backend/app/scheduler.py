@@ -14,8 +14,8 @@ from app.fund_api import query_fund_by_code, FundQueryError
 
 logger = logging.getLogger(__name__)
 
-# 北京时间 = UTC+8，每天晚上 20:00 执行（收盘后净值基本已更新）
-SCHEDULE_HOUR = 20
+# 北京时间 = UTC+8，每天晚上 22:00 执行（此时绝大多数基金已公布结算净值）
+SCHEDULE_HOUR = 22
 SCHEDULE_MINUTE = 0
 
 # 后台任务引用，用于优雅关闭
@@ -23,7 +23,7 @@ _background_task: Optional[asyncio.Task] = None
 
 
 async def _update_single_fund(fund: dict, user_id: str, beijing_today: str) -> dict | None:
-    """更新单只基金的当日收益，返回快照数据或 None"""
+    """更新单只基金的当日收益（基于份额 × 已结算净值精确计算），返回快照数据或 None"""
     code = (fund.get("fund_code") or "").strip()
     if not code:
         logger.info("基金 %s (%s) 无基金代码，跳过定时更新", fund["id"], fund.get("name", ""))
@@ -35,6 +35,8 @@ async def _update_single_fund(fund: dict, user_id: str, beijing_today: str) -> d
     old_return_rate = fund.get("current_return_rate", 0)
     total_buy = fund.get("total_buy_amount", 0)
     total_sell = fund.get("total_sell_amount", 0)
+    total_shares = fund.get("total_shares", 0) or 0
+    yesterday_nav = fund.get("yesterday_nav", 0) or 0
 
     try:
         info = await query_fund_by_code(code)
@@ -45,32 +47,41 @@ async def _update_single_fund(fund: dict, user_id: str, beijing_today: str) -> d
         logger.error("定时更新 - 基金 %s (%s) 查询异常: %s", fund_id, fund_name, e)
         return None
 
-    # 确定用于计算市值的净值：
-    # 盘中（已结算净值日期 < 北京今天）且新浪实时估值可用 → 用估值净值
-    # 当晚净值已结算（date == 今天）→ 用已结算净值
+    # 只使用已结算净值（东方财富），不使用实时估值
+    settled_nav = info.get("nav", 0)
     settled_nav_date = info.get("date", "")
-    estimated_nav = info.get("estimated_nav") or 0
-    use_estimate = estimated_nav > 0 and settled_nav_date < beijing_today
-    nav_for_calc = estimated_nav if use_estimate else info.get("nav", 0)
-    nav_label = "实时估值" if use_estimate else "已结算净值"
 
-    # 今日涨跌幅（%）
-    today_change = info.get("estimated_change")
+    # 当日结算净值未公布时跳过
+    if settled_nav_date < beijing_today or settled_nav <= 0:
+        logger.info(
+            "定时更新 - 基金 %s (%s) 最新净值日期=%s < 今天=%s，跳过（净值尚未公布）",
+            fund_id, fund_name, settled_nav_date, beijing_today,
+        )
+        return None
 
-    # 计算今日收益金额
-    if today_change is not None and old_market_value > 0:
-        today_profit = round(old_market_value * today_change / 100, 2)
-        new_market_value = round(old_market_value + today_profit, 2)
+    # 旧数据初始化：份额为0时用当前市值反推（一次性）
+    if total_shares <= 0 and old_market_value > 0:
+        total_shares = round(old_market_value / settled_nav, 4)
+        logger.info(
+            "定时更新 - 旧数据初始化: 基金 %s (%s) 份额=%.4f（市值%.2f / NAV %.4f）",
+            fund_id, fund_name, total_shares, old_market_value, settled_nav,
+        )
+
+    if total_shares <= 0:
+        logger.warning("定时更新 - 基金 %s (%s) 份额为0，无法计算市值，跳过", fund_id, fund_name)
+        return None
+
+    # 核心公式：市值 = 份额 × 净值，收益 = 份额 × (今日净值 - 昨日净值)
+    new_market_value = round(total_shares * settled_nav, 2)
+
+    if yesterday_nav > 0:
+        today_profit = round(total_shares * (settled_nav - yesterday_nav), 2)
+        today_change = round((settled_nav - yesterday_nav) / yesterday_nav * 100, 4)
     else:
-        # 无涨跌幅数据：尝试用净值反推
+        # 第一天运行：建立基线，不计算收益
         today_profit = 0.0
-        new_market_value = old_market_value
-        # 如果 old_market_value 为 0 但有份额，尝试用净值估算市值
-        if old_market_value == 0 and nav_for_calc > 0 and total_buy > 0:
-            # 用总买入金额推算份额，再算市值（粗略估算）
-            if total_buy > 0:
-                # 无法准确推算份额，保持原值
-                pass
+        today_change = None
+        logger.info("定时更新 - 基金 %s (%s) 首次更新（昨日净值=0），建立基线", fund_id, fund_name)
 
     # 确保市值不为负
     new_market_value = max(0, new_market_value)
@@ -84,40 +95,43 @@ async def _update_single_fund(fund: dict, user_id: str, beijing_today: str) -> d
         new_return_rate = old_return_rate
 
     logger.info(
-        "定时更新 - %s (%s): %s=%s 涨跌=%s%% 市值 %s→%s 收益=%s 收益率 %s→%s%%",
-        fund_id, fund_name,
-        nav_label, nav_for_calc,
-        today_change if today_change is not None else "N/A",
+        "定时更新 - %s (%s): 份额=%.4f 今日NAV=%s 昨日NAV=%s 涨跌=%s%% 市值 %s→%s 收益=%s 收益率 %s→%s%%",
+        fund_id, fund_name, total_shares,
+        settled_nav, yesterday_nav,
+        f"{today_change:+.2f}" if today_change is not None else "N/A",
         old_market_value, new_market_value,
-        today_profit,
+        f"{today_profit:+.2f}",
         old_return_rate, new_return_rate,
     )
 
-    # 写入数据库
+    # 写入数据库（包含份额和昨日净值以便下次计算）
     conn = get_db()
     try:
         conn.execute(
             """UPDATE funds SET
-               current_market_value=?, current_return_rate=?, last_nav_update=?
+               current_market_value=?, current_return_rate=?, last_nav_update=?,
+               total_shares=?, yesterday_nav=?
                WHERE id=? AND user_id=?""",
-            (new_market_value, new_return_rate, now_str(), fund_id, user_id),
+            (new_market_value, new_return_rate, now_str(),
+             total_shares, settled_nav, fund_id, user_id),
         )
 
-        # 保存每日快照（同一天覆盖更新），含收益金额和净值
+        # 保存每日快照（同一天覆盖更新）
         today = beijing_today
         existing = conn.execute(
             "SELECT id FROM snapshots WHERE fund_id=? AND date=? AND user_id=?",
             (fund_id, today, user_id),
         ).fetchone()
 
+        snap_change = today_change if today_change is not None else 0
         if existing:
             conn.execute(
                 """UPDATE snapshots SET
                    safety_cushion=?, recovery_needed=?, today_change=?, total_return=?,
                    daily_profit=?, nav=?
                    WHERE fund_id=? AND date=? AND user_id=?""",
-                (0, 0, today_change or 0, new_return_rate,
-                 today_profit, nav_for_calc,
+                (0, 0, snap_change, new_return_rate,
+                 today_profit, settled_nav,
                  fund_id, today, user_id),
             )
         else:
@@ -127,11 +141,17 @@ async def _update_single_fund(fund: dict, user_id: str, beijing_today: str) -> d
                     today_change, total_return, daily_profit, nav)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (gen_id(), fund_id, user_id, today, 0, 0,
-                 today_change or 0, new_return_rate, today_profit, nav_for_calc),
+                 snap_change, new_return_rate, today_profit, settled_nav),
             )
 
         # 写入操作历史（自动更新记录）
-        profit_note = f"今日收益 {today_profit:+.2f} 元（涨跌 {today_change:+.2f}%）" if today_change is not None else "自动更新净值"
+        if today_change is not None:
+            profit_note = (
+                f"今日收益 {today_profit:+.2f} 元（NAV {yesterday_nav}→{settled_nav}，"
+                f"涨跌 {today_change:+.2f}%，份额 {total_shares:.2f}）"
+            )
+        else:
+            profit_note = f"基线建立：NAV={settled_nav}，份额={total_shares:.2f}"
         conn.execute(
             """INSERT INTO history
                (id, date, fund_name, type, amount, return_rate, note, created_at, user_id)
@@ -153,6 +173,8 @@ async def _update_single_fund(fund: dict, user_id: str, beijing_today: str) -> d
         "today_profit": today_profit,
         "new_market_value": new_market_value,
         "new_return_rate": new_return_rate,
+        "total_shares": total_shares,
+        "settled_nav": settled_nav,
     }
 
 

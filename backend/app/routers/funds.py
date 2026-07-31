@@ -15,7 +15,7 @@ from app.models import (
     FundQueryResponse, AutoUpdateResult, AutoUpdateResponse, TierRecommendRequest, OverallAnalysisRequest, OverallAnalysisResponse,
 )
 
-from app.fund_api import query_fund_by_code, FundQueryError, check_network_connectivity
+from app.fund_api import query_fund_by_code, FundQueryError, check_network_connectivity, get_fund_nav_on_date
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/funds", tags=["基金管理"])
@@ -65,11 +65,26 @@ async def create_fund(fund: FundCreate, user_id: str = Depends(_uid)):
     add_tiers_json = json.dumps([t.model_dump() for t in tiers_raw], ensure_ascii=False)
     pullback_raw = fund.pullback_tiers or []
     pullback_tiers_json = json.dumps([t.model_dump() for t in pullback_raw], ensure_ascii=False)
+
+    # 尝试根据基金代码和买入日期计算初始份额
+    fund_code = data.get("fundCode", "").strip()
+    buy_date = data.get("buyDate", "")
+    initial_principal = data["initialPrincipal"]
+    total_shares = data.get("totalShares", 0) or 0
+    if total_shares <= 0 and fund_code and buy_date and initial_principal > 0:
+        try:
+            nav_on_date = await get_fund_nav_on_date(fund_code, buy_date)
+            if nav_on_date and nav_on_date > 0:
+                total_shares = round(initial_principal / nav_on_date, 4)
+                logger.info("新建基金 %s: 根据买入日 %s NAV %.4f 计算初始份额 %.4f", data["name"], buy_date, nav_on_date, total_shares)
+        except Exception as e:
+            logger.warning("新建基金 %s 计算初始份额失败: %s", data["name"], e)
+
     conn.execute(
         """INSERT INTO funds
            (id, name, fund_code, initial_principal, buy_date,
             total_buy_amount, total_sell_amount, current_market_value,
-            current_return_rate, max_investment, add_tiers,
+            current_return_rate, total_shares, max_investment, add_tiers,
             strategy_type, pullback_tiers,
             stop_profit_line, stop_loss_line, stop_profit_ratio, stop_loss_ratio,
             created_at, user_id)
@@ -77,13 +92,14 @@ async def create_fund(fund: FundCreate, user_id: str = Depends(_uid)):
         (
             fund_id,
             data["name"],
-            data.get("fundCode", ""),
-            data["initialPrincipal"],
-            data["buyDate"],
+            fund_code,
+            initial_principal,
+            buy_date,
             data["totalBuyAmount"],
             data["totalSellAmount"],
             data["currentMarketValue"],
             data["currentReturnRate"],
+            total_shares,
             data.get("maxInvestment", 0),
             add_tiers_json,
             data.get("strategyType", "downside"),
@@ -128,7 +144,7 @@ async def update_fund(fund_id: str, fund: FundUpdate, user_id: str = Depends(_ui
         """UPDATE funds SET
            name=?, fund_code=?, initial_principal=?, buy_date=?,
            total_buy_amount=?, total_sell_amount=?, current_market_value=?,
-           current_return_rate=?, max_investment=?, add_tiers=?,
+           current_return_rate=?, total_shares=?, max_investment=?, add_tiers=?,
            strategy_type=?, pullback_tiers=?,
            stop_profit_line=?, stop_loss_line=?, stop_profit_ratio=?, stop_loss_ratio=?
            WHERE id=?""",
@@ -141,6 +157,7 @@ async def update_fund(fund_id: str, fund: FundUpdate, user_id: str = Depends(_ui
             data["totalSellAmount"],
             data["currentMarketValue"],
             data["currentReturnRate"],
+            data.get("totalShares", 0),
             data.get("maxInvestment", 0),
             add_tiers_json,
             data.get("strategyType", "downside"),
@@ -212,7 +229,8 @@ async def auto_update_nav(user_id: str = Depends(_uid)):
     conn.close()
 
     async def _update_one(fund: dict) -> AutoUpdateResult:
-        """处理单只基金的净值更新（用于并发执行）"""
+        """处理单只基金的净值更新（用于并发执行）
+        优先使用已结算净值 × 份额精确计算，结算净值未出时用实时估值作为盘中参考"""
         code = fund.get("fund_code", "").strip()
         if not code:
             return AutoUpdateResult(
@@ -233,36 +251,75 @@ async def auto_update_nav(user_id: str = Depends(_uid)):
                 message="获取基金实时数据失败",
             )
 
-        # 选择用于计算市值的净值：
-        # 盘中（已结算净值日期 < 北京今天）且新浪实时估值可用 → 用估值净值，实时反映涨跌；
-        # 当晚净值已结算（date == 今天）或无估值 → 用准确的已结算净值。
-        # 注意必须用北京时间判断"今天"，服务器在海外时本地日期可能差一天。
         beijing_today = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")
-        settled_nav = info["nav"]
+        settled_nav = info.get("nav", 0)
+        settled_nav_date = info.get("date", "")
         est_nav = info.get("estimated_nav") or 0
-        use_estimate = est_nav > 0 and info.get("date", "") < beijing_today
-        nav_for_calc = est_nav if use_estimate else settled_nav
-        nav_label = "实时估值" if use_estimate else "净值"
+        est_change = info.get("estimated_change")
 
         old_market = fund["current_market_value"]
+        total_shares = fund.get("total_shares", 0) or 0
 
-        # 今日涨跌幅：优先使用新浪实时估值涨跌幅
-        today_change = info.get("estimated_change")
+        # 旧数据初始化：份额为0时用当前市值反推（仅当有结算净值时）
+        if total_shares <= 0 and old_market > 0 and settled_nav > 0:
+            total_shares = round(old_market / settled_nav, 4)
+            logger.info("旧数据初始化: 基金 %s 份额推算为 %.4f（市值 %.2f / NAV %.4f）",
+                        fund["name"], total_shares, old_market, settled_nav)
 
-        # 由于前端会根据 currentMarketValue + todayChange 自行计算更新后市值，
-        # 后端不再依赖份额计算，仅返回涨跌幅等原始数据
-        new_market = old_market
+        # 判断是否使用已结算净值来做精确计算
+        nav_is_settled_today = settled_nav_date >= beijing_today and settled_nav > 0
+        yesterday_nav = fund.get("yesterday_nav", 0) or 0
+
+        if nav_is_settled_today and total_shares > 0:
+            # 精确模式：已结算净值 × 份额
+            nav_for_calc = settled_nav
+            nav_label = "已结算净值"
+            new_market = round(total_shares * settled_nav, 2)
+
+            if yesterday_nav > 0:
+                today_profit = round(total_shares * (settled_nav - yesterday_nav), 2)
+                today_change = round((settled_nav - yesterday_nav) / yesterday_nav * 100, 4)
+            else:
+                # 第一天：建立基线
+                today_profit = 0.0
+                today_change = est_change
+        elif total_shares > 0 and est_nav > 0:
+            # 盘中参考：用实时估值
+            nav_for_calc = est_nav
+            nav_label = "实时估值(盘中参考)"
+            new_market = round(total_shares * est_nav, 2)
+            today_change = est_change
+            today_profit = 0  # 估值不计算实际收益
+        else:
+            # 降级：无份额无估值
+            nav_for_calc = settled_nav
+            nav_label = "净值"
+            new_market = old_market
+            today_change = est_change
+            today_profit = 0
+
+        # 计算收益率
+        total_buy = fund["total_buy_amount"]
+        total_sell = fund["total_sell_amount"]
+        if total_buy > 0:
+            calc_return_rate = round(
+                (new_market - total_buy + total_sell) / total_buy * 100, 2
+            )
+        else:
+            calc_return_rate = fund["current_return_rate"]
+
         message = f"{nav_label} {nav_for_calc}"
-
-        # 今日涨跌幅兜底：直接用0（前端会基于 todayChange 计算收益）
-        today_profit = 0
+        if nav_is_settled_today and today_profit != 0:
+            message += f" | 今日收益 {today_profit:+.2f} 元"
 
         return AutoUpdateResult(
             fundId=fund["id"], fundName=fund["name"], fundCode=code,
             success=True,
             oldMarketValue=old_market, newMarketValue=new_market,
             todayChange=today_change, todayProfit=today_profit,
-            calculatedReturnRate=None, message=message,
+            calculatedReturnRate=calc_return_rate,
+            totalShares=total_shares, nav=nav_for_calc,
+            navDate=settled_nav_date, message=message,
         )
 
     # 并发查询所有基金（带超时兜底：单只最长 40s，整体 60s）
@@ -320,18 +377,79 @@ async def execute_action(req: ExecuteActionRequest, user_id: str = Depends(_uid)
         action_type = req.action_type
 
         if action_type == "买入":
-            new_buy = fund["total_buy_amount"] + req.amount
-            new_market = fund["current_market_value"] + req.amount
+            amount = req.amount
+            code = (fund.get("fund_code") or "").strip()
+
+            # 获取买入时的净值来计算份额
+            buy_nav = 1.0  # 兜底值
+            nav_fetched = False
+            if code:
+                try:
+                    # 尝试获取买入日净值，若当日净值未出则用最新已结算净值
+                    nav_on_date = await get_fund_nav_on_date(code, today_str())
+                    if nav_on_date and nav_on_date > 0:
+                        buy_nav = nav_on_date
+                        nav_fetched = True
+                except Exception as e:
+                    logger.warning("买入 %s 获取买入日净值失败: %s，尝试最新净值", code, e)
+                if not nav_fetched:
+                    try:
+                        info = await query_fund_by_code(code)
+                        if info.get("nav", 0) > 0:
+                            buy_nav = info["nav"]
+                            nav_fetched = True
+                    except Exception as e:
+                        logger.error("买入 %s 获取最新净值也失败: %s", code, e)
+
+            # 计算买入份额（保留 4 位小数）
+            buy_shares = round(amount / buy_nav, 4) if buy_nav > 0 else 0
+            current_shares = fund.get("total_shares", 0) or 0
+            new_shares = round(current_shares + buy_shares, 4)
+            new_buy = fund["total_buy_amount"] + amount
+
+            # 用份额×净值校准市值
+            if new_shares > 0 and buy_nav > 0:
+                new_market = round(new_shares * buy_nav, 2)
+            else:
+                new_market = fund["current_market_value"] + amount
+
             conn.execute(
-                "UPDATE funds SET total_buy_amount=?, current_market_value=? WHERE id=?",
-                (new_buy, new_market, req.fund_id),
+                "UPDATE funds SET total_buy_amount=?, current_market_value=?, total_shares=? WHERE id=?",
+                (new_buy, new_market, new_shares, req.fund_id),
             )
         elif action_type == "卖出":
-            new_sell = fund["total_sell_amount"] + req.amount
-            new_market = max(0, fund["current_market_value"] - req.amount)
+            amount = req.amount
+            code = (fund.get("fund_code") or "").strip()
+
+            # 获取最新结算净值来计算卖出份额
+            sell_nav = 1.0
+            if code:
+                try:
+                    info = await query_fund_by_code(code)
+                    if info.get("nav", 0) > 0:
+                        sell_nav = info["nav"]
+                except Exception as e:
+                    logger.warning("卖出 %s 获取净值失败: %s", code, e)
+
+            # 计算卖出份额
+            sell_shares = round(amount / sell_nav, 4) if sell_nav > 0 else 0
+            current_shares = fund.get("total_shares", 0) or 0
+
+            # 校验：卖出金额不应超过持仓市值
+            if sell_shares > current_shares + 0.0001:
+                max_sell = round(current_shares * sell_nav, 2) if current_shares > 0 else 0
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"卖出金额超出持仓，当前持有约 {current_shares:.2f} 份，最大可卖出约 ¥{max_sell}",
+                )
+
+            new_shares = max(0, round(current_shares - sell_shares, 4))
+            new_sell = fund["total_sell_amount"] + amount
+            new_market = round(new_shares * sell_nav, 2) if new_shares > 0 else 0
+
             conn.execute(
-                "UPDATE funds SET total_sell_amount=?, current_market_value=? WHERE id=?",
-                (new_sell, new_market, req.fund_id),
+                "UPDATE funds SET total_sell_amount=?, current_market_value=?, total_shares=? WHERE id=?",
+                (new_sell, new_market, new_shares, req.fund_id),
             )
         else:
             raise HTTPException(status_code=400, detail=f"不支持的操作类型: {action_type}")
@@ -353,11 +471,14 @@ async def execute_action(req: ExecuteActionRequest, user_id: str = Depends(_uid)
             updated["current_return_rate"] = new_rate
 
         # 记录撤回快照（操作前状态）写入 history 表
+        nav_for_history = buy_nav if action_type == "买入" else (sell_nav if action_type == "卖出" else 0)
         snapshot_before = json.dumps({
             "total_buy_amount": fund["total_buy_amount"],
             "total_sell_amount": fund["total_sell_amount"],
             "current_market_value": fund["current_market_value"],
             "current_return_rate": fund["current_return_rate"],
+            "total_shares": fund.get("total_shares", 0),
+            "yesterday_nav": fund.get("yesterday_nav", 0),
         }, ensure_ascii=False)
 
         if req.note:
@@ -375,8 +496,8 @@ async def execute_action(req: ExecuteActionRequest, user_id: str = Depends(_uid)
 
         history_id = gen_id()
         conn.execute(
-            """INSERT INTO history (id, date, fund_name, type, amount, return_rate, note, created_at, snapshot_before, user_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO history (id, date, fund_name, type, amount, return_rate, note, created_at, snapshot_before, nav_at_action, user_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 history_id,
                 today_str(),
@@ -387,6 +508,7 @@ async def execute_action(req: ExecuteActionRequest, user_id: str = Depends(_uid)
                 note,
                 now_str(),
                 snapshot_before,
+                nav_for_history,
                 user_id,
             ),
         )
@@ -441,12 +563,16 @@ async def undo_action(history_id: str, user_id: str = Depends(_uid)):
         fund = dict(fund)
         conn.execute(
             """UPDATE funds SET total_buy_amount=?, total_sell_amount=?,
-               current_market_value=?, current_return_rate=? WHERE name=? AND user_id=?""",
+               current_market_value=?, current_return_rate=?,
+               total_shares=?, yesterday_nav=?
+               WHERE name=? AND user_id=?""",
             (
                 before["total_buy_amount"],
                 before["total_sell_amount"],
                 before["current_market_value"],
                 before["current_return_rate"],
+                before.get("total_shares", 0),
+                before.get("yesterday_nav", 0),
                 fund_name,
                 user_id,
             ),

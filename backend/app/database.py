@@ -36,6 +36,8 @@ def init_db():
             total_sell_amount REAL DEFAULT 0,
             current_market_value REAL DEFAULT 0,
             current_return_rate REAL DEFAULT 0,
+            total_shares REAL DEFAULT 0,
+            yesterday_nav REAL DEFAULT 0,
             add_tiers TEXT DEFAULT '',
             strategy_type TEXT DEFAULT 'downside',
             pullback_tiers TEXT DEFAULT '',
@@ -155,6 +157,17 @@ def migrate_db():
             cursor.execute(f"ALTER TABLE snapshots ADD COLUMN {col} REAL DEFAULT {default}")
         except sqlite3.OperationalError:
             pass
+    # funds 表新增 total_shares（持有份额）和 yesterday_nav（前日净值）
+    for col, default in [("total_shares", "0"), ("yesterday_nav", "0")]:
+        try:
+            cursor.execute(f"ALTER TABLE funds ADD COLUMN {col} REAL DEFAULT {default}")
+        except sqlite3.OperationalError:
+            pass
+    # history 表新增 nav_at_action（买入/卖出时的净值）
+    try:
+        cursor.execute("ALTER TABLE history ADD COLUMN nav_at_action REAL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()
 
