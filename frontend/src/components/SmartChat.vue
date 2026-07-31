@@ -268,41 +268,45 @@ onMounted(() => {
 /* 消息行 */
 .msg-row {
   display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  margin-bottom: 12px;
+  flex-direction: column;
+  margin-bottom: 14px;
 }
-.msg-row.user { flex-direction: row-reverse; }
+.msg-row.user { align-items: flex-end; }
+.msg-row:not(.user) { align-items: flex-start; }
 
 .msg-avatar {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 15px;
   flex-shrink: 0;
   background: var(--bg-primary);
+  margin-bottom: 3px;
 }
 
 /* 气泡 */
 .msg-bubble {
-  max-width: calc(100% - 34px);
-  padding: 10px 14px;
+  width: 100%;
+  padding: 8px 12px;
   border-radius: 14px;
   font-size: 14px;
-  line-height: 1.8;
+  line-height: 1.75;
   word-break: break-word;
 }
 .msg-bubble.user {
+  max-width: 80%;
   background: linear-gradient(135deg, #12edd7, #0ec4b0);
   color: #fff;
+  border-top-right-radius: 4px;
   border-bottom-right-radius: 4px;
 }
 .msg-bubble.assistant {
   background: var(--bg-primary);
   color: var(--text-primary);
+  border-top-left-radius: 4px;
   border-bottom-left-radius: 4px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.06);
   overflow-x: auto;
@@ -442,22 +446,24 @@ html.dark .msg-bubble.assistant :deep(pre) {
   margin: 4px 0;
 }
 
-/* 快捷标签 (3列网格) */
+/* 快捷标签 (横向滚动) */
 .quick-tags {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 5px;
+  display: flex;
+  gap: 6px;
   padding: 6px 0;
   flex-shrink: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
+.quick-tags::-webkit-scrollbar { display: none; }
 
 .quick-tag {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 3px;
-  padding: 5px 4px;
-  border-radius: 16px;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 14px;
   border: 1px solid rgba(18,237,215,0.25);
   background: var(--bg-primary);
   color: var(--text-primary);
@@ -465,6 +471,7 @@ html.dark .msg-bubble.assistant :deep(pre) {
   white-space: nowrap;
   cursor: pointer;
   transition: all 0.15s;
+  flex-shrink: 0;
 }
 .quick-tag:active, .quick-tag.active {
   background: rgba(18,237,215,0.12);
