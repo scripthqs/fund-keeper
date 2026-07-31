@@ -472,18 +472,31 @@ def tool_update_all_nav(user_id: str) -> str:
             if info:
                 old_mv = f["current_market_value"] or 0
                 est_change = info.get("estimated_change")
+                est_is_today = info.get("estimate_is_today", False)
 
-                if est_change is not None and old_mv > 0:
-                    # 与前端的 calcProfitFromChange 保持一致：
-                    # change% 是相对于昨日净值的，old_mv 是当前最新市值，
-                    # 所以 profit = old_mv × change / (100 + change)
-                    profit = round(old_mv * est_change / (100 + est_change), 2)
-                    new_mv = round(old_mv + profit, 2)
-                    results.append(
-                        f"{'🟢' if profit >= 0 else '🔴'} **{f['name']}**："
-                        f"¥{_fmt(old_mv)} → ¥{_fmt(new_mv)} "
-                        f"（{'+' if profit >= 0 else ''}{_fmt(profit)}，{est_change:+.2f}%）"
-                    )
+                if old_mv > 0:
+                    if est_change is not None and est_is_today:
+                        # 与前端的 calcProfitFromChange 保持一致：
+                        # change% 是相对于昨日净值的，old_mv 是当前最新市值，
+                        # 所以 profit = old_mv × change / (100 + change)
+                        profit = round(old_mv * est_change / (100 + est_change), 2)
+                        new_mv = round(old_mv + profit, 2)
+                        est_time = info.get("update_time", "")
+                        time_str = f" ⏱️{est_time}" if est_time else ""
+                        results.append(
+                            f"{'🟢' if profit >= 0 else '🔴'} **{f['name']}**："
+                            f"¥{_fmt(old_mv)} → ¥{_fmt(new_mv)} "
+                            f"（{'+' if profit >= 0 else ''}{_fmt(profit)}，{est_change:+.2f}%）"
+                            f"📡实时预估{time_str}"
+                        )
+                    else:
+                        # 未获取到实时估值（或非今日数据），展示已结算净值，不计算预估盈亏
+                        nav = info.get("nav", 0)
+                        nav_date = info.get("date", "?")
+                        results.append(
+                            f"📊 **{f['name']}**：当前市值 ¥{_fmt(old_mv)}，"
+                            f"净值 {nav}（{nav_date} 已结算）"
+                        )
                 else:
                     nav = info.get("nav", 0)
                     results.append(f"📊 **{f['name']}**（{info.get('name', code)}）：净值 {nav}，日期 {info.get('date','?')}")

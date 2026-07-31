@@ -125,6 +125,7 @@ async def get_fund_estimate(code: str) -> dict:
             "estimated_change": 1.68,      # 估算涨跌幅 (%)
             "estimate_time": "10:22:00",   # 估值时间
             "estimate_date": "2026-07-22", # 估值日期
+            "is_today": True,              # 估值日期是否为今天（非今日说明是旧数据/休市）
         }
         无实时估值数据时返回 None 值
     """
@@ -135,14 +136,14 @@ async def get_fund_estimate(code: str) -> dict:
 
         if data.get("result", {}).get("status", {}).get("code") != 0:
             logger.warning("新浪估值接口返回异常: %s", data.get("result", {}).get("status"))
-            return {"estimated_nav": None, "estimated_change": None, "estimate_time": "", "estimate_date": ""}
+            return {"estimated_nav": None, "estimated_change": None, "estimate_time": "", "estimate_date": "", "is_today": False}
 
         inner = data.get("result", {}).get("data", {})
         networth_list = inner.get("networth", []) or []
 
         if not networth_list:
             logger.info("基金 %s 当前无实时估值数据（可能该基金不支持盘中估值）", code)
-            return {"estimated_nav": None, "estimated_change": None, "estimate_time": "", "estimate_date": ""}
+            return {"estimated_nav": None, "estimated_change": None, "estimate_time": "", "estimate_date": "", "is_today": False}
 
         # 取最新一条分时估值
         last = networth_list[-1]
@@ -163,18 +164,21 @@ async def get_fund_estimate(code: str) -> dict:
 
         estimate_time = last.get("min_time", "")
         estimate_date = last.get("pre_date", "")
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        is_today = estimate_date == today_str
 
-        logger.info("基金 %s 实时估值: nav=%s change=%s%% time=%s date=%s",
-                    code, estimated_nav, estimated_change, estimate_time, estimate_date)
+        logger.info("基金 %s 实时估值: nav=%s change=%s%% time=%s date=%s is_today=%s",
+                    code, estimated_nav, estimated_change, estimate_time, estimate_date, is_today)
         return {
             "estimated_nav": estimated_nav,
             "estimated_change": estimated_change,
             "estimate_time": estimate_time,
             "estimate_date": estimate_date,
+            "is_today": is_today,
         }
     except Exception as e:
         _log_network_error("新浪估值", code, e)
-        return {"estimated_nav": None, "estimated_change": None, "estimate_time": "", "estimate_date": ""}
+        return {"estimated_nav": None, "estimated_change": None, "estimate_time": "", "estimate_date": "", "is_today": False}
 
 
 async def query_fund_by_code(code: str) -> dict:
@@ -237,6 +241,7 @@ async def query_fund_by_code(code: str) -> dict:
     estimated_nav = estimate.get("estimated_nav")
     estimated_change = estimate.get("estimated_change")
     estimate_time = estimate.get("estimate_time", "")
+    estimate_is_today = estimate.get("is_today", False)
     if estimate_time and not update_time:
         update_time = estimate_time
     elif estimate_time:
@@ -251,6 +256,7 @@ async def query_fund_by_code(code: str) -> dict:
         "estimated_change": estimated_change,
         "estimate_suspended": False,
         "update_time": update_time,
+        "estimate_is_today": estimate_is_today,
     }
 
 
