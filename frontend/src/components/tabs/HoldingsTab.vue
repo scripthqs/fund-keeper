@@ -31,12 +31,13 @@
 </template>
 
 <script setup>
-import { ref, inject, computed, unref } from 'vue'
+import { ref, computed, unref, inject } from 'vue'
+import { useAppStore } from '../../stores/appStore'
 import DailyAnalysis from '../DailyAnalysis.vue'
 import AdviceResult from '../AdviceResult.vue'
 import { renderMarkdown } from '../../utils/helpers'
 
-const store = inject('store')
+const store = useAppStore()
 const showAdvice = inject('showAdvice')
 const refreshing = ref(false)
 

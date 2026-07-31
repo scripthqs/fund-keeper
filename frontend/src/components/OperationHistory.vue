@@ -77,12 +77,14 @@
 </template>
 
 <script setup>
-import { inject, ref } from 'vue'
+import { ref } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useAppStore } from '../stores/appStore'
 import { fmtNum, fmtSigned } from '../utils/helpers'
 import { askConfirm, showTip } from '../utils/dialog'
 
-const store = inject('store')
-const history = store.history
+const store = useAppStore()
+const { history } = storeToRefs(store)
 const undoingId = ref(null)
 const evaluatingId = ref(null)
 

@@ -18,7 +18,7 @@
     </header>
 
     <!-- 加载中 -->
-    <div v-if="store.loading.value" class="loading-wrap">
+    <div v-if="store.loading" class="loading-wrap">
       <van-loading type="spinner" size="24px" color="#3b82f6" />
       <p class="loading-text">正在加载数据...</p>
     </div>
@@ -95,7 +95,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, provide, nextTick, watch } from 'vue'
-import { useStore } from './composables/useStore'
+import { useAppStore } from './stores/appStore'
 import AuthPage from './components/AuthPage.vue'
 import FundModal from './components/FundModal.vue'
 import HoldingsTab from './components/tabs/HoldingsTab.vue'
@@ -104,7 +104,7 @@ import StrategyTab from './components/tabs/StrategyTab.vue'
 import MineTab from './components/tabs/MineTab.vue'
 import SmartChat from './components/SmartChat.vue'
 
-const store = useStore()
+const store = useAppStore()
 const isDark = ref(false)
 const currentTime = ref('')
 const activeTab = ref('chat')
@@ -161,7 +161,6 @@ function openFundModal(id) {
 }
 
 // 提供给子组件
-provide('store', store)
 provide('openFundModal', openFundModal)
 provide('closeFundModal', () => fundModalVisible.value = false)
 provide('editingFundId', editingFundId)

@@ -92,11 +92,12 @@
 
 <script setup>
 import { inject, ref, computed } from 'vue'
+import { useAppStore } from '../../stores/appStore'
 import { showToast } from 'vant'
 import { api } from '../../api'
 import AccountManagement from '../AccountManagement.vue'
 
-const store = inject('store')
+const store = useAppStore()
 const userInfo = inject('userInfo')
 
 const isDark = ref(document.documentElement.classList.contains('dark'))
@@ -174,13 +175,13 @@ async function handleChangePwd(action) {
   }
 }
 
-const fundCount = computed(() => store.funds.value?.length || 0)
+const fundCount = computed(() => store.funds?.length || 0)
 const totalMarketValueText = computed(() => {
-  const v = store.totalMarketValue.value
+  const v = store.totalMarketValue
   if (v >= 10000) return (v / 10000).toFixed(2) + '万'
   return v.toFixed(2)
 })
-const tradeCount = computed(() => store.history.value?.length || 0)
+const tradeCount = computed(() => store.history?.length || 0)
 const displayName = computed(() => userInfo?.value?.username || '理财小助理用户')
 const avatarText = computed(() => {
   // 用户名首字作为头像
@@ -188,7 +189,7 @@ const avatarText = computed(() => {
     return userInfo.value.username[0].toUpperCase()
   }
   // 回退：取基金名称首字拼成头像文字
-  const names = store.funds.value?.map(f => f.name?.[0]).filter(Boolean).slice(0, 3).join('')
+  const names = store.funds?.map(f => f.name?.[0]).filter(Boolean).slice(0, 3).join('')
   return names || '💰'
 })
 </script>

@@ -1,4 +1,5 @@
 import { createApp } from 'vue'
+import { createPinia } from 'pinia'
 import App from './App.vue'
 import './styles/global.css'
 import 'vant/lib/index.css'
@@ -13,6 +14,7 @@ import {
 } from 'vant'
 
 const app = createApp(App)
+app.use(createPinia())
 app.use(Button).use(Tag).use(Loading).use(Slider)
   .use(Field).use(Cell).use(CellGroup).use(Checkbox)
   .use(ActionSheet).use(Popup).use(Dialog).use(Notify)

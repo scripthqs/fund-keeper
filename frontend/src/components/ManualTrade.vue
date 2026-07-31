@@ -67,12 +67,14 @@
 </template>
 
 <script setup>
-import { ref, computed, inject } from 'vue'
+import { ref, computed } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useAppStore } from '../stores/appStore'
 import { fmtNum, fmtSigned } from '../utils/helpers'
 import { askConfirm, showTip, showError } from '../utils/dialog'
 
-const store = inject('store')
-const funds = store.funds
+const store = useAppStore()
+const { funds } = storeToRefs(store)
 
 const selectedFundId = ref('')
 const selectedFundName = ref('')

@@ -51,10 +51,13 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, inject, watch } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useAppStore } from '../stores/appStore'
 import { STYLE_PRESETS } from '../utils/constants'
 
-const store = inject('store')
+const store = useAppStore()
+const { config: storeConfig } = storeToRefs(store)
 const collapsed = ref(true)
 const activeTab = ref('stopProfit')
 const showStylePicker = ref(false)
@@ -67,8 +70,8 @@ const tabs = [
 const styleMap = { conservative: '保守型', moderate: '稳健型', aggressive: '进取型', speculative: '激进型' }
 const styleLabel = computed(() => styleMap[c.style] || c.style)
 
-const c = reactive({ ...store.config })
-watch(store.config, (cfg) => Object.assign(c, cfg), { deep: true })
+const c = reactive({ ...storeConfig.value })
+watch(storeConfig, (cfg) => Object.assign(c, cfg), { deep: true })
 
 const summary = computed(() => {
   const trailing = c.useTrailingStop ? `回撤>${c.trailingStop}%止盈` : '固定止盈'

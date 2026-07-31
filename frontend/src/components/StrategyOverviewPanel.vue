@@ -67,13 +67,15 @@
 </template>
 
 <script setup>
-import { computed, inject } from 'vue'
+import { computed } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useAppStore } from '../stores/appStore'
 import { fmtNum, fmtSigned } from '../utils/helpers'
 import { calcSafetyCushion, calcRecoveryNeeded } from '../utils/engine'
 import { B, round } from '../utils/bigMath'
 
-const store = inject('store')
-const funds = store.funds
+const store = useAppStore()
+const { funds } = storeToRefs(store)
 
 const overviewData = computed(() => {
   const list = funds.value || []

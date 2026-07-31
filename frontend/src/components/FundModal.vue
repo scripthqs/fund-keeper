@@ -470,8 +470,10 @@ import { round, B } from "../utils/bigMath";
 import { api } from "../api";
 import { createTypewriter } from "../utils/typewriter";
 
+import { useAppStore } from "../stores/appStore";
+
 const emit = defineEmits(["close"]);
-const store = inject("store");
+const store = useAppStore();
 const editingFundId = inject("editingFundId");
 const saving = ref(false);
 const querying = ref(false);
@@ -749,7 +751,7 @@ watch(
     strategyStyle.value = "";
 
     if (id) {
-      const fund = store.funds.value.find((f) => f.id === id);
+      const fund = store.funds.find((f) => f.id === id);
       if (fund) {
         Object.assign(form.value, {
           ...fund,

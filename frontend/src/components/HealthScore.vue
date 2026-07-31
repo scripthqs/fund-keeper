@@ -33,20 +33,21 @@
 </template>
 
 <script setup>
-import { computed, inject } from 'vue'
+import { computed } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useAppStore } from '../stores/appStore'
 import { calcHealthScore } from '../utils/engine'
 
-const store = inject('store')
-const funds = store.funds
-const config = store.config
+const store = useAppStore()
+const { funds, config } = storeToRefs(store)
 
 const fundScores = computed(() => {
-  return funds.value.map(f => calcHealthScore(f, config, funds.value))
+  return funds.value.map(f => calcHealthScore(f, config.value, funds.value))
 })
 
 const finalScore = computed(() => {
   if (funds.value.length === 0) return 0
-  const total = store.totalMarketValue.value
+  const total = store.totalMarketValue
   let weighted = 0
   fundScores.value.forEach((s, i) => {
     const w = total > 0 ? funds.value[i].currentMarketValue / total : 1 / funds.value.length

@@ -218,11 +218,14 @@ import { createTypewriter } from '../utils/typewriter'
 
 const emit = defineEmits(['addFund'])
 
-const store = inject('store')
+import { storeToRefs } from 'pinia'
+import { useAppStore } from '../stores/appStore'
+
+const store = useAppStore()
+const { funds } = storeToRefs(store)
 const openFundModal = inject('openFundModal')
 const showAdvice = inject('showAdvice')
 const analysisData = inject('analysisData')
-const funds = store.funds
 
 // van-collapse 手风琴模式，空字符串 = 全部折叠
 const activeNames = ref('')
@@ -679,7 +682,7 @@ function analyze(fund) {
   const config = store.config
   const peakRR = config.peakReturnRate || {}
   const result = analyzeFundEnhanced(fund, effectiveChange, s.totalReturn, config, peakRR)
-  const warning = evaluateWarning(fund, effectiveChange, s.totalReturn, config, store.dailySnapshots.value[fund.id])
+  const warning = evaluateWarning(fund, effectiveChange, s.totalReturn, config, store.dailySnapshots[fund.id])
   const { safetyCushion } = calcSafetyCushion(fund, effectiveChange)
   const recoveryNeeded = s.totalReturn < 0 ? calcRecoveryNeeded(s.totalReturn) : null
   store.saveSnapshot(fund.id, safetyCushion, recoveryNeeded, effectiveChange, s.totalReturn)

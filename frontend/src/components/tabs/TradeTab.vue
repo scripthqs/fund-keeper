@@ -10,13 +10,14 @@
 </template>
 
 <script setup>
-import { ref, inject } from 'vue'
+import { ref } from 'vue'
+import { useAppStore } from '../../stores/appStore'
 import ManualTrade from '../ManualTrade.vue'
 import PositionOverview from '../PositionOverview.vue'
 import HealthScore from '../HealthScore.vue'
 import OperationHistory from '../OperationHistory.vue'
 
-const store = inject('store')
+const store = useAppStore()
 const refreshing = ref(false)
 
 async function onRefresh() {

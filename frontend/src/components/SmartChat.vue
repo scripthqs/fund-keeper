@@ -83,11 +83,14 @@
 </template>
 
 <script setup>
-import { ref, inject, nextTick, watch, onMounted, computed } from 'vue'
+import { ref, nextTick, watch, onMounted, computed } from 'vue'
+import { storeToRefs } from 'pinia'
+import { useAppStore } from '../stores/appStore'
 import { renderMarkdown } from '../utils/helpers'
 import { askConfirm } from '../utils/dialog'
 
-const store = inject('store')
+const store = useAppStore()
+const { chatMessages: messages, aiStatus } = storeToRefs(store)
 const input = ref('')
 const loading = ref(false)
 const msgContainer = ref(null)
@@ -97,9 +100,7 @@ const toolStatus = ref('')
 const activeTag = ref('')
 const webSearchEnabled = ref(true)
 
-const messages = store.chatMessages
-const aiStatus = store.aiStatus
-const fundCount = computed(() => (store.funds.value || []).length)
+const fundCount = computed(() => (store.funds || []).length)
 
 // 交易状态
 const tradingBadge = ref({ icon: '⚪', text: '加载中...' })

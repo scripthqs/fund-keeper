@@ -92,7 +92,9 @@ import { calcSafetyCushion, calcStressTest, getMoodStyle } from '../utils/engine
 import { api } from '../api'
 import { askConfirm, showError, showTip } from '../utils/dialog'
 
-const store = inject('store')
+import { useAppStore } from '../stores/appStore'
+
+const store = useAppStore()
 const emit = defineEmits(['close', 'actionDone'])
 const data = inject('analysisData')
 
@@ -186,7 +188,7 @@ async function fetchEmotion(d) {
   emotionLines.value = []
   emotionTitle.value = 'AI 正在生成情绪文案...'
   try {
-    if (!store.aiStatus.value.configured) {
+    if (!store.aiStatus.configured) {
       emotionTitle.value = '💡 心情加油站'
       emotionLines.value = ['服务端未配置 API Key，暂无法生成 AI 情绪段子']
       return

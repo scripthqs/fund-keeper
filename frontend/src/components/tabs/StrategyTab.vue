@@ -11,11 +11,12 @@
 </template>
 
 <script setup>
-import { ref, inject } from 'vue'
+import { ref } from 'vue'
+import { useAppStore } from '../../stores/appStore'
 import ConfigPanel from '../ConfigPanel.vue'
 import StrategyOverviewPanel from '../StrategyOverviewPanel.vue'
 
-const store = inject('store')
+const store = useAppStore()
 const refreshing = ref(false)
 
 async function onRefresh() {
