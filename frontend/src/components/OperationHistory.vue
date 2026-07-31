@@ -12,29 +12,30 @@
       <template v-else>
         <!-- 桌面端表格 -->
         <div class="history-desktop overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead><tr style="color:var(--text-secondary);border-bottom:1px solid var(--border-color)">
-              <th class="text-left py-2 px-2">日期</th><th class="text-left py-2 px-2">基金</th><th class="text-left py-2 px-2">类型</th>
-              <th class="text-right py-2 px-2">金额(元)</th><th class="text-right py-2 px-2">收益率</th><th class="text-left py-2 px-2">备注</th>
-              <th class="text-center py-2 px-2">操作</th>
+          <table class="history-table">
+            <thead><tr>
+              <th>日期</th><th>基金</th><th>类型</th>
+              <th class="text-right">金额</th><th class="text-right">收益率</th><th>备注</th>
+              <th class="text-center">操作</th>
             </tr></thead>
             <tbody>
               <template v-for="h in history" :key="h.id">
                 <tr :style="{ borderBottom: h.aiEvaluation ? 'none' : '1px solid var(--border-color)' }">
-                  <td class="py-2 px-2">{{ h.date }}</td><td class="py-2 px-2">{{ h.fundName }}</td>
-                  <td class="py-2 px-2"><van-tag :type="h.type === '买入' ? 'success' : 'danger'" round size="small">{{ h.type }}</van-tag></td>
-                  <td class="py-2 px-2 text-right font-medium">¥{{ fmtNum(h.amount) }}</td>
-                  <td class="py-2 px-2 text-right" :class="(h.returnRate || 0) >= 0 ? 'text-red-600' : 'text-green-600'">{{ fmtSigned(h.returnRate) }}%</td>
-                  <td class="py-2 px-2 text-xs" style="color:var(--text-secondary)">{{ h.note || '-' }}</td>
-                  <td class="py-2 px-2 text-center">
-                    <div class="flex items-center justify-center gap-1 flex-wrap">
-                      <van-button v-if="h.canUndo" size="mini" round plain type="warning" :loading="undoingId === h.id" @click="undo(h)">↩ 撤回</van-button>
+                  <td class="date-col">{{ h.date }}</td>
+                  <td class="fund-col" :title="h.fundName">{{ h.fundName }}</td>
+                  <td class="type-col"><van-tag :type="h.type === '买入' ? 'success' : 'danger'" round size="small">{{ h.type }}</van-tag></td>
+                  <td class="text-right amount-col">¥{{ fmtNum(h.amount) }}</td>
+                  <td class="text-right return-col" :class="(h.returnRate || 0) >= 0 ? 'text-red-600' : 'text-green-600'">{{ fmtSigned(h.returnRate) }}%</td>
+                  <td class="note-col" :title="h.note">{{ h.note || '-' }}</td>
+                  <td class="text-center action-col">
+                    <div class="action-btns">
+                      <van-button v-if="h.canUndo" size="mini" round plain type="warning" :loading="undoingId === h.id" @click="undo(h)">↩</van-button>
                       <van-button
                         v-if="!h.aiEvaluation"
                         size="mini" round plain type="primary"
                         :loading="evaluatingId === h.id"
                         @click="evaluate(h)"
-                      >🤖 AI评价</van-button>
+                      >🤖</van-button>
                     </div>
                   </td>
                 </tr>
@@ -48,19 +49,24 @@
           </table>
         </div>
         <!-- 移动端卡片 -->
-        <div class="history-mobile space-y-2">
-          <div v-for="h in history" :key="h.id" class="card p-3 text-sm" :style="{ borderLeft: '3px solid ' + (h.type === '买入' ? '#22c55e' : '#ef4444') }">
-            <div class="flex items-center justify-between mb-2">
-              <span class="font-medium">{{ h.fundName }}</span>
+        <div class="history-mobile">
+          <div v-for="h in history" :key="h.id" class="history-card" :style="{ borderLeftColor: h.type === '买入' ? '#22c55e' : '#ef4444' }">
+            <!-- 标题行：基金名 + 类型标签 -->
+            <div class="card-header">
+              <span class="card-fund-name">{{ h.fundName }}</span>
               <van-tag :type="h.type === '买入' ? 'success' : 'danger'" round size="small">{{ h.type }}</van-tag>
             </div>
-            <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs" style="color:var(--text-secondary)">
-              <span>📅 {{ h.date }}</span><span>💵 ¥{{ fmtNum(h.amount) }}</span>
-              <span :style="{ color: (h.returnRate || 0) >= 0 ? '#dc2626' : '#16a34a', fontWeight: 600 }">📊 {{ fmtSigned(h.returnRate) }}%</span>
-              <span>{{ h.note || '-' }}</span>
+            <!-- 数据行：日期 + 金额 + 收益率 一行展示 -->
+            <div class="card-info-row">
+              <span class="info-item">📅 {{ h.date }}</span>
+              <span class="info-item">💵 ¥{{ fmtNum(h.amount) }}</span>
+              <span class="info-item return-item" :class="(h.returnRate || 0) >= 0 ? 'return-up' : 'return-down'">📊 {{ fmtSigned(h.returnRate) }}%</span>
             </div>
-            <div class="mt-2 flex items-center gap-1 flex-wrap">
-              <van-button v-if="h.canUndo" size="mini" round plain type="warning" :loading="undoingId === h.id" @click="undo(h)">↩ 撤回此操作</van-button>
+            <!-- 备注行（有内容才显示） -->
+            <div v-if="h.note" class="card-note">{{ h.note }}</div>
+            <!-- 操作按钮 -->
+            <div class="card-actions">
+              <van-button v-if="h.canUndo" size="mini" round plain type="warning" :loading="undoingId === h.id" @click="undo(h)">↩ 撤回</van-button>
               <van-button
                 v-if="!h.aiEvaluation"
                 size="mini" round plain type="primary"
@@ -68,7 +74,8 @@
                 @click="evaluate(h)"
               >🤖 AI评价</van-button>
             </div>
-            <div v-if="h.aiEvaluation" class="ai-evaluation-box-mobile mt-2">{{ h.aiEvaluation }}</div>
+            <!-- AI 评价 -->
+            <div v-if="h.aiEvaluation" class="ai-evaluation-box-mobile">{{ h.aiEvaluation }}</div>
           </div>
         </div>
       </template>
@@ -133,6 +140,122 @@ function exportCsv() {
 </script>
 
 <style scoped>
+/* 桌面端表格 */
+.history-table {
+  width: 100%;
+  font-size: 0.8rem;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.history-table th {
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-align: left;
+  padding: 6px 6px;
+  border-bottom: 1px solid var(--border-color);
+  white-space: nowrap;
+  font-size: 0.75rem;
+}
+.history-table td {
+  padding: 5px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.8rem;
+}
+
+/* 列宽分配 */
+.date-col    { width: 12%; }
+.fund-col    { width: 14%; }
+.type-col    { width: 8%; }
+.amount-col  { width: 13%; }
+.return-col  { width: 11%; }
+.note-col    { width: 20%; color: var(--text-secondary); font-size: 0.75rem; }
+.action-col  { width: 22%; }
+
+.action-btns {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.action-btns .van-button {
+  min-width: auto !important;
+  padding: 0 8px !important;
+}
+
+/* ===== 移动端卡片 ===== */
+.history-mobile {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+}
+.history-card {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-primary);
+  border-left: 3px solid;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+
+/* 标题行：基金名 + 类型 */
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.card-fund-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: 8px;
+}
+
+/* 数据行：日期 + 金额 + 收益率 一行 */
+.card-info-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.info-item {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.return-item {
+  font-weight: 700;
+  margin-left: auto;
+}
+.return-up   { color: #dc2626; }
+.return-down { color: #16a34a; }
+
+/* 备注 */
+.card-note {
+  margin-top: 4px;
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 操作按钮 */
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* AI 评价 */
 .ai-evaluation-box {
   font-size: 0.8rem;
   line-height: 1.65;
@@ -141,15 +264,23 @@ function exportCsv() {
   border: 1px solid rgba(139,92,246,.15);
   border-radius: 8px;
   padding: 0.5rem 0.75rem;
+  white-space: normal;
 }
 
 .ai-evaluation-box-mobile {
-  font-size: 0.8rem;
-  line-height: 1.65;
+  font-size: 0.78rem;
+  line-height: 1.6;
   color: var(--text-primary);
   background: linear-gradient(135deg, rgba(139,92,246,.06), rgba(59,130,246,.05));
   border: 1px solid rgba(139,92,246,.15);
   border-radius: 8px;
-  padding: 0.5rem 0.75rem;
+  padding: 0.4rem 0.65rem;
+  margin-top: 8px;
+}
+
+/* 响应式切换 */
+@media (max-width: 640px) {
+  .history-desktop { display: none; }
+  .history-mobile { display: flex; }
 }
 </style>
