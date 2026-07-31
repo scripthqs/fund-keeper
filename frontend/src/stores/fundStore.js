@@ -168,8 +168,8 @@ export const useFundStore = defineStore('fund', () => {
   async function removeFund(id) { await api.deleteFund(id); await refreshFunds() }
 
   // ---- 交易操作 ----
-  async function executeAction(fundId, actionType, amount, reasonType, isMax, note) {
-    const r = await api.executeAction({ fundId, actionType, amount, reasonType, isMax: !!isMax, note: note || '' })
+  async function executeAction(fundId, actionType, amount, reasonType, isMax, note, shares = 0, redemptionFee = 0) {
+    const r = await api.executeAction({ fundId, actionType, amount, reasonType, isMax: !!isMax, note: note || '', shares, redemptionFee })
     if (r.fund) {
       const i = funds.value.findIndex(f => f.id === fundId)
       if (i >= 0) Object.assign(funds.value[i], r.fund)

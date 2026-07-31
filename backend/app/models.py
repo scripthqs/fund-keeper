@@ -207,10 +207,12 @@ class SnapshotOut(SnapshotCreate):
 class ExecuteActionRequest(BaseModel):
     fund_id: str = Field("", alias="fundId")
     action_type: str = Field("", alias="actionType")  # 买入 | 卖出
-    amount: float
+    amount: float = 0  # 买入：金额(元)；卖出：可选，不填则用 shares×nav 计算
+    shares: float = 0  # 卖出：赎回份额(份)；买入时忽略
     reason_type: str = Field("", alias="reasonType")
     is_max: bool = Field(False, alias="isMax")
     note: str = Field("", alias="note")  # 手动操作自定义备注
+    redemption_fee: float = Field(0, alias="redemptionFee")  # 卖出：赎回费用(元)，可选
 
 
 class ExecuteActionResponse(BaseModel):

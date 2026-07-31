@@ -375,35 +375,64 @@ async def execute_action(req: ExecuteActionRequest, user_id: str = Depends(_uid)
 
         fund = dict(fund)
         action_type = req.action_type
+        buy_nav = 1.0  # 初始化，避免变量作用域问题
+        sell_nav = 1.0
+        nav_is_exact = False  # 买入净值是否为精确值
+
+        # 旧数据初始化：份额为0但市值>0时，用最新净值反推份额
+        code = (fund.get("fund_code") or "").strip()
+        current_shares = fund.get("total_shares", 0) or 0
+        if current_shares <= 0 and fund["current_market_value"] > 0 and code:
+            try:
+                info = await query_fund_by_code(code)
+                init_nav = info.get("nav", 0)
+                if init_nav > 0:
+                    current_shares = round(fund["current_market_value"] / init_nav, 4)
+                    conn.execute(
+                        "UPDATE funds SET total_shares=?, yesterday_nav=? WHERE id=?",
+                        (current_shares, init_nav, req.fund_id),
+                    )
+                    # 同步更新 fund 字典，确保 snapshot_before 记录正确状态
+                    fund["total_shares"] = current_shares
+                    fund["yesterday_nav"] = init_nav
+                    logger.info("买入/卖出操作前初始化旧数据: %s 份额=%.4f, 昨日NAV=%.4f",
+                                fund["name"], current_shares, init_nav)
+            except Exception as e:
+                logger.warning("买入/卖出前初始化份额失败 %s: %s", fund["name"], e)
 
         if action_type == "买入":
+            # ===== 买入：用户输入金额，系统估算份额 =====
+            # 基金交易规则：T日15:00前买入 → 按T日结算净值成交（当晚~22:00公布）
+            # T日15:00后买入 → 按下个交易日净值成交
+            # 因此交易时段买入时，确切成交价未知，先用最新已结算净值估算
+            # 定时任务(22:00)会用当日实际结算净值纠正份额
             amount = req.amount
             code = (fund.get("fund_code") or "").strip()
 
-            # 获取买入时的净值来计算份额
             buy_nav = 1.0  # 兜底值
-            nav_fetched = False
+            nav_is_exact = False  # 净值是否为精确值（非估算）
             if code:
                 try:
-                    # 尝试获取买入日净值，若当日净值未出则用最新已结算净值
+                    # 尝试获取买入日净值（如果是历史日期，NAV已结算则可精确计算）
                     nav_on_date = await get_fund_nav_on_date(code, today_str())
                     if nav_on_date and nav_on_date > 0:
                         buy_nav = nav_on_date
-                        nav_fetched = True
+                        nav_is_exact = True
                 except Exception as e:
                     logger.warning("买入 %s 获取买入日净值失败: %s，尝试最新净值", code, e)
-                if not nav_fetched:
+                if not nav_is_exact:
                     try:
                         info = await query_fund_by_code(code)
                         if info.get("nav", 0) > 0:
                             buy_nav = info["nav"]
-                            nav_fetched = True
+                            logger.info("买入 %s: 今日净值未公布，用最新已结算净值 %.4f 估算份额（22:00自动纠正）",
+                                        code, buy_nav)
                     except Exception as e:
                         logger.error("买入 %s 获取最新净值也失败: %s", code, e)
 
             # 计算买入份额（保留 4 位小数）
             buy_shares = round(amount / buy_nav, 4) if buy_nav > 0 else 0
-            current_shares = fund.get("total_shares", 0) or 0
+            # current_shares 已在上面旧数据初始化块中计算，包含旧持仓份额
             new_shares = round(current_shares + buy_shares, 4)
             new_buy = fund["total_buy_amount"] + amount
 
@@ -418,10 +447,14 @@ async def execute_action(req: ExecuteActionRequest, user_id: str = Depends(_uid)
                 (new_buy, new_market, new_shares, req.fund_id),
             )
         elif action_type == "卖出":
-            amount = req.amount
+            # ===== 卖出：用户输入份额，系统计算到账金额 =====
+            # 基金交易规则：按"份额"申请赎回
+            # 到账金额 = 赎回份额 × 成交净值(T日结算净值) - 赎回费用
+            # T日净值未知时用最新已结算净值估算到账金额，22:00定时任务纠正
+            # current_shares 已在上面旧数据初始化块中计算，包含旧持仓份额
             code = (fund.get("fund_code") or "").strip()
 
-            # 获取最新结算净值来计算卖出份额
+            # 获取最新结算净值来估算到账金额
             sell_nav = 1.0
             if code:
                 try:
@@ -431,26 +464,38 @@ async def execute_action(req: ExecuteActionRequest, user_id: str = Depends(_uid)
                 except Exception as e:
                     logger.warning("卖出 %s 获取净值失败: %s", code, e)
 
-            # 计算卖出份额
-            sell_shares = round(amount / sell_nav, 4) if sell_nav > 0 else 0
-            current_shares = fund.get("total_shares", 0) or 0
+            # 卖出份额：优先用 shares 字段，兼容旧 amount 字段
+            redemption_fee = getattr(req, 'redemption_fee', 0) or 0
+            if req.shares > 0:
+                sell_shares = req.shares
+            elif req.amount > 0:
+                # 兼容旧接口：金额 → 份额
+                sell_shares = round(req.amount / sell_nav, 4) if sell_nav > 0 else 0
+            else:
+                raise HTTPException(status_code=400, detail="请输入卖出份额")
 
-            # 校验：卖出金额不应超过持仓市值
+            # 校验：卖出份额不应超过持有份额
             if sell_shares > current_shares + 0.0001:
-                max_sell = round(current_shares * sell_nav, 2) if current_shares > 0 else 0
+                max_amount = round(current_shares * sell_nav, 2) if current_shares > 0 else 0
                 raise HTTPException(
                     status_code=400,
-                    detail=f"卖出金额超出持仓，当前持有约 {current_shares:.2f} 份，最大可卖出约 ¥{max_sell}",
+                    detail=f"卖出份额超出持仓，当前持有 {current_shares:.2f} 份（约 ¥{max_amount}）",
                 )
 
+            # 计算实际到账金额
+            estimated_amount = round(sell_shares * sell_nav, 2)
+            actual_amount = max(0, round(estimated_amount - redemption_fee, 2))
+
             new_shares = max(0, round(current_shares - sell_shares, 4))
-            new_sell = fund["total_sell_amount"] + amount
+            new_sell = fund["total_sell_amount"] + actual_amount
             new_market = round(new_shares * sell_nav, 2) if new_shares > 0 else 0
 
             conn.execute(
                 "UPDATE funds SET total_sell_amount=?, current_market_value=?, total_shares=? WHERE id=?",
                 (new_sell, new_market, new_shares, req.fund_id),
             )
+            # 将实际到账金额赋给 amount 变量，供后续历史记录使用
+            amount = actual_amount
         else:
             raise HTTPException(status_code=400, detail=f"不支持的操作类型: {action_type}")
 
@@ -494,6 +539,14 @@ async def execute_action(req: ExecuteActionRequest, user_id: str = Depends(_uid)
             if req.is_max:
                 note += "（上限）"
 
+        # 补充交易明细到备注
+        if action_type == "买入":
+            nav_tag = "精确" if nav_is_exact else "估算(22:00纠正)"
+            note += f" | {buy_shares:.2f}份 @NAV{buy_nav:.4f}({nav_tag})"
+        elif action_type == "卖出":
+            fee_info = f" - 费{redemption_fee:.2f}" if redemption_fee > 0 else ""
+            note += f" | {sell_shares:.2f}份 @NAV{sell_nav:.4f} → ¥{amount:.2f}{fee_info}"
+
         history_id = gen_id()
         conn.execute(
             """INSERT INTO history (id, date, fund_name, type, amount, return_rate, note, created_at, snapshot_before, nav_at_action, user_id)
@@ -503,7 +556,7 @@ async def execute_action(req: ExecuteActionRequest, user_id: str = Depends(_uid)
                 today_str(),
                 updated["name"],
                 action_type,
-                req.amount,
+                amount,  # 买入=金额，卖出=实际到账金额
                 updated["current_return_rate"],
                 note,
                 now_str(),

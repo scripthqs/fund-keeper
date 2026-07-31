@@ -71,6 +71,34 @@ async def _update_single_fund(fund: dict, user_id: str, beijing_today: str) -> d
         logger.warning("定时更新 - 基金 %s (%s) 份额为0，无法计算市值，跳过", fund_id, fund_name)
         return None
 
+    # 检查今日是否有买入记录，若买入时用的是估算净值（nav_at_action ≠ 今日结算净值），
+    # 则用今日结算净值纠正份额，确保每笔买入的份额精确
+    conn_check = get_db()
+    try:
+        today_buys = conn_check.execute(
+            "SELECT amount, nav_at_action FROM history WHERE fund_name=? AND date=? AND type='买入' AND user_id=?",
+            (fund_name, beijing_today, user_id),
+        ).fetchall()
+        for buy in today_buys:
+            buy_amount = buy["amount"] or 0
+            estimated_nav = buy["nav_at_action"] or 0
+            if estimated_nav > 0 and buy_amount > 0 and abs(estimated_nav - settled_nav) > 0.0001:
+                estimated_shares = round(buy_amount / estimated_nav, 4)
+                correct_shares = round(buy_amount / settled_nav, 4)
+                correction = round(correct_shares - estimated_shares, 4)
+                if abs(correction) > 0:
+                    total_shares = round(total_shares + correction, 4)
+                    logger.info(
+                        "定时更新 - 纠正 %s 今日买入份额: 估算NAV %.4f→实际NAV %.4f, "
+                        "份额 %.4f→%.4f (调整%+.4f)",
+                        fund_name, estimated_nav, settled_nav,
+                        estimated_shares, correct_shares, correction,
+                    )
+    except Exception as e:
+        logger.warning("定时更新 - 查询今日买入记录失败 %s: %s", fund_id, e)
+    finally:
+        conn_check.close()
+
     # 核心公式：市值 = 份额 × 净值，收益 = 份额 × (今日净值 - 昨日净值)
     new_market_value = round(total_shares * settled_nav, 2)
 

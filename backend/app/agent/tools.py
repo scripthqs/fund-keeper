@@ -102,16 +102,18 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "execute_trade",
-            "description": "执行买入或卖出操作。买入时需确保用户确认；卖出通常是因为触发止盈止损",
+            "description": "执行买入或卖出操作。买入时需确保用户确认；卖出时用户输入的是份额而非金额。买入按金额申请（成交净值当晚公布后确认份额），卖出按份额申请（到账金额=份额×净值-赎回费）。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "fund_name": {"type": "string", "description": "基金名称"},
                     "action": {"type": "string", "enum": ["buy", "sell"], "description": "买入或卖出"},
-                    "amount": {"type": "number", "description": "交易金额（元）"},
+                    "amount": {"type": "number", "description": "买入时：交易金额（元）；卖出时：可不填，用 shares 指定份额"},
+                    "shares": {"type": "number", "description": "卖出时：赎回份额（份）。买入时忽略此参数"},
+                    "redemption_fee": {"type": "number", "description": "卖出时：赎回费用（元），选填，默认0"},
                     "note": {"type": "string", "description": "交易备注（如：触发止盈、手动加仓等）"},
                 },
-                "required": ["fund_name", "action", "amount"],
+                "required": ["fund_name", "action"],
             },
         },
     },
@@ -150,6 +152,7 @@ TOOL_DEFINITIONS = [
                     "total_buy_amount": {"type": "number", "description": "累计买入金额（元）"},
                     "total_sell_amount": {"type": "number", "description": "累计卖出金额（元）"},
                     "current_market_value": {"type": "number", "description": "当前市值（元）"},
+                    "total_shares": {"type": "number", "description": "持有份额（份），从支付宝/天天基金查到的精确份额"},
                     "max_investment": {"type": "number", "description": "投入上限（元）"},
                     "stop_profit_line": {"type": "number", "description": "止盈线（%，如 20 表示 +20%）"},
                     "stop_loss_line": {"type": "number", "description": "止损线（%，如 -25 表示 -25%）"},
@@ -613,67 +616,157 @@ def tool_get_operation_history(user_id: str) -> str:
     return "\n".join(lines)
 
 
-def tool_execute_trade(user_id: str, fund_name: str, action: str, amount: float, note: str = "") -> str:
-    """💸 执行交易"""
+def tool_execute_trade(
+    user_id: str,
+    fund_name: str,
+    action: str,
+    amount: float = 0,
+    shares: float = 0,
+    redemption_fee: float = 0,
+    note: str = "",
+) -> str:
+    """💸 执行交易（份额制买卖，与 funds.py execute_action 保持一致）"""
+    import asyncio
+    import concurrent.futures
+
     funds = _get_funds(user_id)
     f = _find_fund(funds, fund_name)
     if not f:
         return f"❌ 未找到名为「{fund_name}」的基金。"
 
-    if amount <= 0:
-        return "❌ 交易金额必须大于0。"
-
     action_cn = "买入" if action == "buy" else "卖出"
     action_type = "买入" if action == "buy" else "卖出"
+    code = (f.get("fund_code") or "").strip()
+
+    if action == "buy" and amount <= 0:
+        return "❌ 买入金额必须大于0。"
+    if action == "sell":
+        if shares <= 0:
+            return "❌ 请输入卖出份额（份）。基金赎回按份额申请，非金额。"
+        current_shares = f.get("total_shares", 0) or 0
+        if shares > current_shares + 0.0001:
+            return f"❌ 卖出份额 {shares:.2f} 超出持仓 {current_shares:.2f} 份。"
+
+    # 异步查询净值（在独立线程中执行）
+    def _get_nav():
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(_query_nav_async(code))
+        from app import fund_api
+        def _run():
+            fund_api._client = None
+            fund_api._client_no_verify = None
+            return asyncio.run(_query_nav_async(code))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(_run).result()
+
+    async def _query_nav_async(c):
+        from app.fund_api import query_fund_by_code, get_fund_nav_on_date
+        if not c:
+            return 1.0, False, 1.0
+        nav = 1.0
+        nav_is_exact = False
+        try:
+            nav_on_date = await get_fund_nav_on_date(c, today_str())
+            if nav_on_date and nav_on_date > 0:
+                nav = nav_on_date
+                nav_is_exact = True
+        except Exception:
+            pass
+        if not nav_is_exact:
+            try:
+                info = await query_fund_by_code(c)
+                if info.get("nav", 0) > 0:
+                    nav = info["nav"]
+                    logger.info("AI买入 %s: 今日净值未公布，用最新已结算净值 %.4f 估算", c, nav)
+            except Exception:
+                pass
+        return nav, nav_is_exact, nav  # (buy_nav, is_exact, sell_nav)
+
+    nav_result = _get_nav()
+    buy_nav = nav_result[0]
+    nav_is_exact = nav_result[1]
+    sell_nav = nav_result[2]
 
     conn = get_db()
     try:
-        # 保存操作前快照
+        # 旧数据初始化：份额为0但市值>0时，用最新净值反推份额
+        current_shares = f.get("total_shares", 0) or 0
+        if current_shares <= 0 and (f["current_market_value"] or 0) > 0 and code and sell_nav > 0:
+            current_shares = round((f["current_market_value"] or 0) / sell_nav, 4)
+            conn.execute(
+                "UPDATE funds SET total_shares=?, yesterday_nav=? WHERE id=? AND user_id=?",
+                (current_shares, sell_nav, f["id"], user_id),
+            )
+            logger.info("AI交易前初始化旧数据: %s 份额=%.4f, 昨日NAV=%.4f",
+                        f["name"], current_shares, sell_nav)
+
+        # 保存操作前快照（包含份额和昨日净值，支持撤单）
         snapshot_before = json.dumps({
             "total_buy_amount": f["total_buy_amount"],
             "total_sell_amount": f["total_sell_amount"],
             "current_market_value": f["current_market_value"],
             "current_return_rate": f["current_return_rate"],
+            "total_shares": current_shares,
+            "yesterday_nav": f.get("yesterday_nav", 0),
         }, ensure_ascii=False)
 
         if action == "buy":
+            # 买入：金额 → 估算份额
+            buy_shares = round(amount / buy_nav, 4) if buy_nav > 0 else 0
+            new_shares = round(current_shares + buy_shares, 4)
             new_buy = (f["total_buy_amount"] or 0) + amount
-            new_market = (f["current_market_value"] or 0) + amount
+            new_market = round(new_shares * buy_nav, 2) if new_shares > 0 and buy_nav > 0 else (f["current_market_value"] or 0) + amount
+
             conn.execute(
-                "UPDATE funds SET total_buy_amount=?, current_market_value=? WHERE id=?",
-                (new_buy, new_market, f["id"]),
+                "UPDATE funds SET total_buy_amount=?, current_market_value=?, total_shares=? WHERE id=? AND user_id=?",
+                (new_buy, new_market, new_shares, f["id"], user_id),
             )
+            nav_tag = "精确" if nav_is_exact else "估算(22:00纠正)"
+            trade_note = (note or f"AI助手{action_cn}") + f" | {buy_shares:.2f}份 @NAV{buy_nav:.4f}({nav_tag})"
+            trade_amount = amount
+            trade_nav = buy_nav
         else:
-            new_sell = (f["total_sell_amount"] or 0) + amount
-            new_market = max(0, (f["current_market_value"] or 0) - amount)
+            # 卖出：份额 → 估算金额
+            sell_shares = shares
+            estimated_amount = round(sell_shares * sell_nav, 2)
+            actual_amount = max(0, round(estimated_amount - redemption_fee, 2))
+            new_shares = max(0, round(current_shares - sell_shares, 4))
+            new_sell = (f["total_sell_amount"] or 0) + actual_amount
+            new_market = round(new_shares * sell_nav, 2) if new_shares > 0 else 0
+
             conn.execute(
-                "UPDATE funds SET total_sell_amount=?, current_market_value=? WHERE id=?",
-                (new_sell, new_market, f["id"]),
+                "UPDATE funds SET total_sell_amount=?, current_market_value=?, total_shares=? WHERE id=? AND user_id=?",
+                (new_sell, new_market, new_shares, f["id"], user_id),
             )
+            fee_info = f" - 费{redemption_fee:.2f}" if redemption_fee > 0 else ""
+            trade_note = (note or f"AI助手{action_cn}") + f" | {sell_shares:.2f}份 @NAV{sell_nav:.4f} → ¥{actual_amount:.2f}{fee_info}"
+            trade_amount = actual_amount
+            trade_nav = sell_nav
 
         # 重新计算收益率
         updated = dict(conn.execute(
-            "SELECT * FROM funds WHERE id=?", (f["id"],)
+            "SELECT * FROM funds WHERE id=? AND user_id=?", (f["id"], user_id)
         ).fetchone())
-
         if (updated["total_buy_amount"] or 0) > 0:
             new_rate = round(
                 ((updated["current_market_value"] or 0) - (updated["total_buy_amount"] or 0) + (updated["total_sell_amount"] or 0))
-                / updated["total_buy_amount"] * 100,
-                2,
+                / updated["total_buy_amount"] * 100, 2,
             )
-            conn.execute("UPDATE funds SET current_return_rate=? WHERE id=?", (new_rate, f["id"]))
+            conn.execute("UPDATE funds SET current_return_rate=? WHERE id=? AND user_id=?", (new_rate, f["id"], user_id))
             updated["current_return_rate"] = new_rate
 
         # 记录操作历史
         history_id = gen_id()
         conn.execute(
-            """INSERT INTO history (id, date, fund_name, type, amount, return_rate, note, created_at, snapshot_before, user_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            """INSERT INTO history (id, date, fund_name, type, amount, return_rate, note, created_at,
+               snapshot_before, nav_at_action, user_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 history_id, today_str(), updated["name"], action_type,
-                amount, updated["current_return_rate"], note or f"AI助手{action_cn}",
-                now_str(), snapshot_before, user_id,
+                trade_amount, updated["current_return_rate"], trade_note,
+                now_str(), snapshot_before, trade_nav, user_id,
             ),
         )
         conn.commit()
@@ -681,12 +774,14 @@ def tool_execute_trade(user_id: str, fund_name: str, action: str, amount: float,
         return (
             f"✅ **{action_cn}成功！**\n\n"
             f"基金：{updated['name']}\n"
-            f"金额：¥{_fmt(amount)}\n"
+            f"份额变动：{current_shares:.2f} → {new_shares:.2f} 份\n"
             f"操作后市值：¥{_fmt(updated.get('current_market_value', 0))}\n"
-            f"操作后收益率：{updated.get('current_return_rate', 0):+.2f}%"
+            f"操作后收益率：{updated.get('current_return_rate', 0):+.2f}%\n"
+            f"净值：{trade_nav:.4f}（{'已结算' if nav_is_exact else '估算，22:00自动纠正'}）"
         )
     except Exception as e:
         conn.rollback()
+        logger.error("AI交易失败: %s", e)
         return f"❌ 交易失败：{e}"
     finally:
         conn.close()
@@ -770,6 +865,7 @@ def tool_update_fund(
     total_buy_amount: Optional[float] = None,
     total_sell_amount: Optional[float] = None,
     current_market_value: Optional[float] = None,
+    total_shares: Optional[float] = None,
     max_investment: Optional[float] = None,
     stop_profit_line: Optional[float] = None,
     stop_loss_line: Optional[float] = None,
@@ -800,6 +896,7 @@ def tool_update_fund(
         "total_buy_amount": total_buy_amount,
         "total_sell_amount": total_sell_amount,
         "current_market_value": current_market_value,
+        "total_shares": total_shares,
         "max_investment": max_investment,
         "stop_profit_line": stop_profit_line,
         "stop_loss_line": stop_loss_line,
@@ -810,7 +907,7 @@ def tool_update_fund(
     labels = {
         "name": "名称", "fund_code": "基金代码", "initial_principal": "初始本金",
         "buy_date": "买入日期", "total_buy_amount": "累计买入", "total_sell_amount": "累计卖出",
-        "current_market_value": "当前市值", "max_investment": "投入上限",
+        "current_market_value": "当前市值", "total_shares": "持有份额", "max_investment": "投入上限",
         "stop_profit_line": "止盈线", "stop_loss_line": "止损线",
         "stop_profit_ratio": "止盈卖出比例", "stop_loss_ratio": "止损卖出比例",
         "strategy_type": "策略类型",
