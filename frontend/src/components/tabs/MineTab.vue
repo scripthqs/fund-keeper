@@ -92,12 +92,12 @@
 
 <script setup>
 import { inject, ref, computed } from 'vue'
-import { useAppStore } from '../../stores/appStore'
+import { useFundStore } from '../../stores/appStore'
 import { showToast } from 'vant'
 import { api } from '../../api'
 import AccountManagement from '../AccountManagement.vue'
 
-const store = useAppStore()
+const store = useFundStore()
 const userInfo = inject('userInfo')
 
 const isDark = ref(document.documentElement.classList.contains('dark'))

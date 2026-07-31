@@ -32,12 +32,12 @@
 
 <script setup>
 import { ref, computed, unref, inject } from 'vue'
-import { useAppStore } from '../../stores/appStore'
+import { useFundStore } from '../../stores/appStore'
 import DailyAnalysis from '../DailyAnalysis.vue'
 import AdviceResult from '../AdviceResult.vue'
 import { renderMarkdown } from '../../utils/helpers'
 
-const store = useAppStore()
+const store = useFundStore()
 const showAdvice = inject('showAdvice')
 const refreshing = ref(false)
 

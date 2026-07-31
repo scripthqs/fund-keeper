@@ -35,11 +35,13 @@
 <script setup>
 import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useAppStore } from '../stores/appStore'
+import { useFundStore, useConfigStore } from '../stores/appStore'
 import { calcHealthScore } from '../utils/engine'
 
-const store = useAppStore()
-const { funds, config } = storeToRefs(store)
+const fundStore = useFundStore()
+const configStore = useConfigStore()
+const { funds } = storeToRefs(fundStore)
+const { config } = storeToRefs(configStore)
 
 const fundScores = computed(() => {
   return funds.value.map(f => calcHealthScore(f, config.value, funds.value))
@@ -47,7 +49,7 @@ const fundScores = computed(() => {
 
 const finalScore = computed(() => {
   if (funds.value.length === 0) return 0
-  const total = store.totalMarketValue
+  const total = fundStore.totalMarketValue
   let weighted = 0
   fundScores.value.forEach((s, i) => {
     const w = total > 0 ? funds.value[i].currentMarketValue / total : 1 / funds.value.length

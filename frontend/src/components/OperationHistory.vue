@@ -86,11 +86,11 @@
 <script setup>
 import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useAppStore } from '../stores/appStore'
+import { useFundStore } from '../stores/appStore'
 import { fmtNum, fmtSigned } from '../utils/helpers'
 import { askConfirm, showTip } from '../utils/dialog'
 
-const store = useAppStore()
+const store = useFundStore()
 const { history } = storeToRefs(store)
 const undoingId = ref(null)
 const evaluatingId = ref(null)

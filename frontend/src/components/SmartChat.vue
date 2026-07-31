@@ -85,12 +85,15 @@
 <script setup>
 import { ref, nextTick, watch, onMounted, computed } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useAppStore } from '../stores/appStore'
+import { useFundStore, useConfigStore, useChatStore } from '../stores/appStore'
 import { renderMarkdown } from '../utils/helpers'
 import { askConfirm } from '../utils/dialog'
 
-const store = useAppStore()
-const { chatMessages: messages, aiStatus } = storeToRefs(store)
+const fundStore = useFundStore()
+const configStore = useConfigStore()
+const chatStore = useChatStore()
+const { chatMessages: messages } = storeToRefs(chatStore)
+const { aiStatus } = storeToRefs(configStore)
 const input = ref('')
 const loading = ref(false)
 const msgContainer = ref(null)
@@ -100,7 +103,7 @@ const toolStatus = ref('')
 const activeTag = ref('')
 const webSearchEnabled = ref(true)
 
-const fundCount = computed(() => (store.funds || []).length)
+const fundCount = computed(() => (fundStore.funds || []).length)
 
 // 交易状态
 const tradingBadge = ref({ icon: '⚪', text: '加载中...' })
@@ -147,14 +150,14 @@ async function send(customMsg) {
   toolStatus.value = ''
 
   try {
-    let ctx = store.buildFundContext()
+    let ctx = fundStore.buildFundContext()
     // 根据联网开关注入指令
     if (webSearchEnabled.value) {
       ctx += '\n\n🌐 用户已开启联网搜索。遇到最新新闻、政策、行情、基金资讯等问题，请调用 search_web 工具获取实时信息后再回答。'
     } else {
       ctx += '\n\n⚠️ 用户已关闭联网搜索功能，请不要调用 search_web 工具，基于已有知识和数据回答即可。'
     }
-    await store.sendSmartMessage(
+    await chatStore.sendSmartMessage(
       message,
       ctx,
       // onChunk
@@ -184,7 +187,7 @@ async function send(customMsg) {
         toolStatus.value = ''
         // 写库类工具执行后刷新持仓，保持各 Tab 数据同步
         if (['update_fund', 'execute_trade', 'add_fund_quick'].includes(toolName)) {
-          await store.refreshFunds()
+          await fundStore.refreshFunds()
         }
       }
     )
@@ -203,7 +206,7 @@ async function send(customMsg) {
 
 async function clearChat() {
   if (!await askConfirm('确定清空所有聊天记录吗？')) return
-  await store.clearChat()
+  await chatStore.clearChat()
 }
 
 function scrollToBottom() {

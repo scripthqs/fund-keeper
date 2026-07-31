@@ -95,7 +95,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, provide, nextTick, watch } from 'vue'
-import { useAppStore } from './stores/appStore'
+import { useFundStore } from './stores/appStore'
 import AuthPage from './components/AuthPage.vue'
 import FundModal from './components/FundModal.vue'
 import HoldingsTab from './components/tabs/HoldingsTab.vue'
@@ -104,7 +104,7 @@ import StrategyTab from './components/tabs/StrategyTab.vue'
 import MineTab from './components/tabs/MineTab.vue'
 import SmartChat from './components/SmartChat.vue'
 
-const store = useAppStore()
+const store = useFundStore()
 const isDark = ref(false)
 const currentTime = ref('')
 const activeTab = ref('chat')

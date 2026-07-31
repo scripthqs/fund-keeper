@@ -69,13 +69,14 @@
 <script setup>
 import { computed } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useAppStore } from '../stores/appStore'
+import { useFundStore, useConfigStore } from '../stores/appStore'
 import { fmtNum, fmtSigned } from '../utils/helpers'
 import { calcSafetyCushion, calcRecoveryNeeded } from '../utils/engine'
 import { B, round } from '../utils/bigMath'
 
-const store = useAppStore()
-const { funds } = storeToRefs(store)
+const fundStore = useFundStore()
+const configStore = useConfigStore()
+const { funds } = storeToRefs(fundStore)
 
 const overviewData = computed(() => {
   const list = funds.value || []
@@ -104,7 +105,7 @@ const overviewData = computed(() => {
 // 预警：接近止盈/止损线
 const alerts = computed(() => {
   const list = funds.value || []
-  const cfg = store.config || {}
+  const cfg = configStore.config || {}
   const result = []
 
   for (const f of list) {
@@ -156,7 +157,7 @@ const alerts = computed(() => {
 // 操作建议
 const suggestions = computed(() => {
   const list = funds.value || []
-  const cfg = store.config || {}
+  const cfg = configStore.config || {}
   const result = []
 
   for (const f of list) {

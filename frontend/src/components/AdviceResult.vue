@@ -92,9 +92,10 @@ import { calcSafetyCushion, calcStressTest, getMoodStyle } from '../utils/engine
 import { api } from '../api'
 import { askConfirm, showError, showTip } from '../utils/dialog'
 
-import { useAppStore } from '../stores/appStore'
+import { useFundStore, useConfigStore } from '../stores/appStore'
 
-const store = useAppStore()
+const fundStore = useFundStore()
+const configStore = useConfigStore()
 const emit = defineEmits(['close', 'actionDone'])
 const data = inject('analysisData')
 
@@ -140,7 +141,7 @@ async function fetchInterpretation() {
   interpretText.value = ''
   try {
     const fund = d.fund
-    const config = store.config
+    const config = configStore.config
     for await (const event of api.interpretAdviceStream({
       fundName: fund.name,
       fundData: {
@@ -188,7 +189,7 @@ async function fetchEmotion(d) {
   emotionLines.value = []
   emotionTitle.value = 'AI 正在生成情绪文案...'
   try {
-    if (!store.aiStatus.configured) {
+    if (!configStore.aiStatus.configured) {
       emotionTitle.value = '💡 心情加油站'
       emotionLines.value = ['服务端未配置 API Key，暂无法生成 AI 情绪段子']
       return
@@ -245,7 +246,7 @@ async function exec() {
   if (!await askConfirm(`确认执行${actionType}操作，金额 ¥${fmtNum(amount)}？`)) return
   submitting.value = true
   try {
-    await store.executeAction(data.value.fund.id, actionType, amount, reasonType, false)
+    await fundStore.executeAction(data.value.fund.id, actionType, amount, reasonType, false)
     showTip(`✅ ${actionType}操作成功！可在「操作历史」中撤回。`)
     emit('actionDone')
   } catch (e) { showError('操作失败: ' + e.message) }

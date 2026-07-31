@@ -470,10 +470,10 @@ import { round, B } from "../utils/bigMath";
 import { api } from "../api";
 import { createTypewriter } from "../utils/typewriter";
 
-import { useAppStore } from "../stores/appStore";
+import { useFundStore } from "../stores/appStore";
 
 const emit = defineEmits(["close"]);
-const store = useAppStore();
+const store = useFundStore();
 const editingFundId = inject("editingFundId");
 const saving = ref(false);
 const querying = ref(false);

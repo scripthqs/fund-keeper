@@ -53,10 +53,10 @@
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useAppStore } from '../stores/appStore'
+import { useConfigStore } from '../stores/appStore'
 import { STYLE_PRESETS } from '../utils/constants'
 
-const store = useAppStore()
+const store = useConfigStore()
 const { config: storeConfig } = storeToRefs(store)
 const collapsed = ref(true)
 const activeTab = ref('stopProfit')

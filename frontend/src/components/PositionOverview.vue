@@ -27,10 +27,10 @@
 
 <script setup>
 import { storeToRefs } from 'pinia'
-import { useAppStore } from '../stores/appStore'
+import { useFundStore } from '../stores/appStore'
 import { fmtNum, fmtSigned } from '../utils/helpers'
 
-const store = useAppStore()
+const store = useFundStore()
 const { funds } = storeToRefs(store)
 
 function pct(f) {

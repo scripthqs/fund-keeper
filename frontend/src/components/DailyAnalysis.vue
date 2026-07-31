@@ -219,10 +219,11 @@ import { createTypewriter } from '../utils/typewriter'
 const emit = defineEmits(['addFund'])
 
 import { storeToRefs } from 'pinia'
-import { useAppStore } from '../stores/appStore'
+import { useFundStore, useConfigStore } from '../stores/appStore'
 
-const store = useAppStore()
-const { funds } = storeToRefs(store)
+const fundStore = useFundStore()
+const configStore = useConfigStore()
+const { funds } = storeToRefs(fundStore)
 const openFundModal = inject('openFundModal')
 const showAdvice = inject('showAdvice')
 const analysisData = inject('analysisData')
@@ -354,7 +355,7 @@ function getAccurateTodayChange(fundId) {
 // ---- 删除基金 ----
 async function del(id) {
   if (!await askConfirm('确定删除这只基金吗？')) return
-  await store.removeFund(id)
+  await fundStore.removeFund(id)
 }
 
 // ---- 一键更新净值（预览模式） ----
@@ -413,7 +414,7 @@ async function autoUpdate() {
   updatingNav.value = true
   updateResult.value = null
   try {
-    const r = await store.autoUpdateNav()
+    const r = await fundStore.autoUpdateNav()
     updateResult.value = r
     // 预览模式：只展示计算结果，不直接修改数据库
     if (r.results) {
@@ -589,7 +590,7 @@ async function autoFetchTodayChange(fund) {
   s.fetchingChange = true
   s.fetchResult = ''
   try {
-    const info = await store.queryFund(fund.fundCode)
+    const info = await fundStore.queryFund(fund.fundCode)
     // 优先使用新浪实时估值涨跌幅
     if (info.estimated_change != null) {
       s.todayChange = info.estimated_change
@@ -679,15 +680,15 @@ function analyze(fund) {
   if (s.totalReturn == null || isNaN(s.totalReturn)) { showTip('请输入当前总收益率'); return }
 
   const effectiveChange = getAccurateTodayChange(fund.id)
-  const config = store.config
+  const config = configStore.config
   const peakRR = config.peakReturnRate || {}
   const result = analyzeFundEnhanced(fund, effectiveChange, s.totalReturn, config, peakRR)
-  const warning = evaluateWarning(fund, effectiveChange, s.totalReturn, config, store.dailySnapshots[fund.id])
+  const warning = evaluateWarning(fund, effectiveChange, s.totalReturn, config, fundStore.dailySnapshots[fund.id])
   const { safetyCushion } = calcSafetyCushion(fund, effectiveChange)
   const recoveryNeeded = s.totalReturn < 0 ? calcRecoveryNeeded(s.totalReturn) : null
-  store.saveSnapshot(fund.id, safetyCushion, recoveryNeeded, effectiveChange, s.totalReturn)
+  fundStore.saveSnapshot(fund.id, safetyCushion, recoveryNeeded, effectiveChange, s.totalReturn)
   if (config.useTrailingStop && fund.currentReturnRate > (peakRR[fund.id] || 0)) {
-    store.updatePeakReturn(fund.id, fund.currentReturnRate)
+    configStore.updatePeakReturn(fund.id, fund.currentReturnRate)
   }
   analysisData.value = { fund, result, warning, safetyCushion, recoveryNeeded, todayChange: effectiveChange, totalReturn: s.totalReturn }
   showAdvice.value = true

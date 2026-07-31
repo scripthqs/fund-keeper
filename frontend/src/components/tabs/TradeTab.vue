@@ -11,13 +11,13 @@
 
 <script setup>
 import { ref } from 'vue'
-import { useAppStore } from '../../stores/appStore'
+import { useFundStore } from '../../stores/appStore'
 import ManualTrade from '../ManualTrade.vue'
 import PositionOverview from '../PositionOverview.vue'
 import HealthScore from '../HealthScore.vue'
 import OperationHistory from '../OperationHistory.vue'
 
-const store = useAppStore()
+const store = useFundStore()
 const refreshing = ref(false)
 
 async function onRefresh() {

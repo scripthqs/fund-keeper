@@ -12,11 +12,11 @@
 
 <script setup>
 import { ref } from 'vue'
-import { useAppStore } from '../../stores/appStore'
+import { useFundStore } from '../../stores/appStore'
 import ConfigPanel from '../ConfigPanel.vue'
 import StrategyOverviewPanel from '../StrategyOverviewPanel.vue'
 
-const store = useAppStore()
+const store = useFundStore()
 const refreshing = ref(false)
 
 async function onRefresh() {
