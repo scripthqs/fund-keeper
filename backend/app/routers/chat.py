@@ -207,7 +207,7 @@ SMART_CHAT_SYSTEM_PROMPT = """你是「理财小助手」，一个专业、亲�
 2. **get_fund_detail** — 用户问某只具体基金的详细信息时调用
 3. **check_alerts** — 用户问「预警」「风险」「要不要卖」时调用
 4. **get_trading_suggestions** — 用户问「建议」「该怎么办」「操作策略」时调用
-5. **update_all_nav** — 用户要查询最新净值、涨跌幅时调用（仅获取实时数据，不会修改持仓）
+5. **update_all_nav** — 用户要查询最新净值、涨跌幅时调用（仅获取实时数据，不会修改持仓）。⚠️ 回复时第一句必须是总体汇总（总市值、今日预估总盈亏、总体涨跌幅），然后再列各基金明细。工具返回中已包含「📌 总体预估」行，你必须把它放在回复最前面，禁止省略
 6. **get_investment_config** — 用户问「配置」「止盈止损线」时调用
 7. **get_snapshot_history** — 用户想看某基金的历史走势时调用
 8. **get_operation_history** — 用户想看交易记录时调用
@@ -354,7 +354,7 @@ async def chat_smart_stream(req: ChatRequest, user_id: str = Depends(_uid)):
 
                         result = execute_tool(tool_name, arguments, user_id)
 
-                        yield f"data: {json.dumps({'tool_result': tool_name, 'content': result[:200] + ('...' if len(result) > 200 else '')}, ensure_ascii=False)}\n\n"
+                        yield f"data: {json.dumps({'tool_result': tool_name, 'content': result[:800] + ('...' if len(result) > 800 else '')}, ensure_ascii=False)}\n\n"
 
                         messages.append({
                             "role": "tool",

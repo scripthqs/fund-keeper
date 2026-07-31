@@ -461,6 +461,10 @@ def tool_update_all_nav(user_id: str) -> str:
             return pool.submit(_run_in_thread).result()
 
     results = []
+    total_old_mv = 0.0
+    total_est_profit = 0.0
+    has_any_estimate = False
+
     for f in funds:
         code = f.get("fund_code", "")
         if not code:
@@ -489,6 +493,9 @@ def tool_update_all_nav(user_id: str) -> str:
                             f"（{'+' if profit >= 0 else ''}{_fmt(profit)}，{est_change:+.2f}%）"
                             f"📡实时预估{time_str}"
                         )
+                        total_old_mv += old_mv
+                        total_est_profit += profit
+                        has_any_estimate = True
                     else:
                         # 未获取到实时估值（或非今日数据），展示已结算净值，不计算预估盈亏
                         nav = info.get("nav", 0)
@@ -505,7 +512,19 @@ def tool_update_all_nav(user_id: str) -> str:
         except Exception as e:
             results.append(f"❌ **{f['name']}**：查询出错 - {e}")
 
-    return "📊 **实时净值查询**\n\n" + "\n".join(results)
+    # 汇总总体预估盈亏（放在最前面，确保 AI 不会忽略）
+    lines = ["📊 **实时净值查询**\n"]
+    if has_any_estimate and total_old_mv > 0:
+        total_new_mv = round(total_old_mv + total_est_profit, 2)
+        total_rate = round(total_est_profit / total_old_mv * 100, 2)
+        emoji = "🟢" if total_est_profit >= 0 else "🔴"
+        lines.append(
+            f"{emoji} **📌 总体预估**：¥{_fmt(total_old_mv)} → ¥{_fmt(total_new_mv)} "
+            f"| 今日预估盈亏 {('+' if total_est_profit >= 0 else '')}{_fmt(total_est_profit)}（{total_rate:+.2f}%）\n"
+        )
+    lines.append("\n".join(results))
+
+    return "\n".join(lines)
 
 
 def tool_get_investment_config(user_id: str) -> str:
