@@ -1,5 +1,7 @@
 """基金 CRUD 路由 + 基金数据自动更新"""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -90,8 +92,8 @@ async def create_fund(fund: FundCreate, user_id: str = Depends(_uid)):
             current_return_rate, total_shares, max_investment, add_tiers,
             strategy_type, pullback_tiers,
             stop_profit_line, stop_loss_line, stop_profit_ratio, stop_loss_ratio,
-            created_at, user_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            created_at, user_id, shares_verified, version, total_dividend)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             fund_id,
             data["name"],
@@ -113,6 +115,9 @@ async def create_fund(fund: FundCreate, user_id: str = Depends(_uid)):
             data.get("stopLossRatio", 0),
             now_str(),
             user_id,
+            data.get("sharesVerified", 0),
+            data.get("version", 0),
+            data.get("totalDividend", 0),
         ),
     )
     conn.commit()

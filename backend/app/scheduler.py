@@ -32,7 +32,7 @@ SCHEDULE_MINUTE = 0
 _background_task: Optional[asyncio.Task] = None
 
 
-async def _update_single_fund(fund: dict, user_id: str, beijing_today: str) -> dict | None:
+async def _update_single_fund(fund: dict, user_id: str, beijing_today: str) -> Optional[dict]:
     """更新单只基金的当日收益（基于份额 × 已结算净值精确计算），返回快照数据或 None"""
     code = (fund.get("fund_code") or "").strip()
     if not code:
