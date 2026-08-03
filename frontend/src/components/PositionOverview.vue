@@ -9,6 +9,7 @@
           <div class="stat-card green"><div class="text-xs opacity-80">当前持仓市值</div><div class="text-lg font-bold mt-1">¥{{ fmtNum(store.totalMarketValue) }}</div></div>
           <div class="stat-card orange"><div class="text-xs opacity-80">累计买入</div><div class="text-lg font-bold mt-1">¥{{ fmtNum(store.totalBuy) }}</div></div>
           <div class="stat-card"><div class="text-xs opacity-80">总收益率</div><div class="text-lg font-bold mt-1" :class="store.totalReturnRate >= 0 ? 'text-red-200' : 'text-green-200'">{{ fmtSigned(store.totalReturnRate) }}%</div></div>
+          <div v-if="store.totalDividend > 0" class="stat-card" style="background:linear-gradient(135deg,rgba(82,196,26,0.3),rgba(82,196,26,0.1))"><div class="text-xs opacity-80">累计分红</div><div class="text-lg font-bold mt-1" style="color:#52c41a">¥{{ fmtNum(store.totalDividend) }}</div></div>
         </div>
         <div v-if="store.totalMarketValue > 0" class="mt-4">
           <div class="text-xs font-medium mb-2" style="color:var(--text-secondary)">各基金持仓占比</div>

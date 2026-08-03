@@ -24,7 +24,8 @@ export const useFundStore = defineStore('fund', () => {
   const totalMarketValue = computed(() => funds.value.reduce((s, f) => s + f.currentMarketValue, 0))
   const totalBuy = computed(() => funds.value.reduce((s, f) => s + f.totalBuyAmount, 0))
   const totalSell = computed(() => funds.value.reduce((s, f) => s + f.totalSellAmount, 0))
-  const totalReturnRate = computed(() => totalBuy.value > 0 ? round(B(totalMarketValue.value).minus(totalBuy.value).plus(totalSell.value).div(totalBuy.value).times(100), 4) : 0)
+  const totalDividend = computed(() => funds.value.reduce((s, f) => s + (f.totalDividend || 0), 0))
+  const totalReturnRate = computed(() => totalBuy.value > 0 ? round(B(totalMarketValue.value).minus(totalBuy.value).plus(totalSell.value).plus(totalDividend.value).div(totalBuy.value).times(100), 4) : 0)
 
   // ---- 加载标记 ----
   const _fundsLoaded = ref(false)
@@ -261,7 +262,9 @@ export const useFundStore = defineStore('fund', () => {
     ctx += `- 极端波动线：±${config.extremeVolatility}% | 赎回费豁免：${config.freeDays}天\n`
     ctx += `- 单只仓位上限：${config.maxPosition}%\n\n`
     funds.value.forEach(f => {
-      ctx += `【${f.name}】\n  初始本金：¥${fmtNum(f.initialPrincipal)} | 当前市值：¥${fmtNum(f.currentMarketValue)}\n  累计买入：¥${fmtNum(f.totalBuyAmount)} | 累计卖出：¥${fmtNum(f.totalSellAmount)}\n  持有份额：${fmtNum(f.totalShares || 0)} 份 | 当前收益率：${fmtSigned(f.currentReturnRate)}% | 持有：${daysBetween(f.buyDate)}天 | 买入日期：${f.buyDate}\n`
+      ctx += `【${f.name}】\n  初始本金：¥${fmtNum(f.initialPrincipal)} | 当前市值：¥${fmtNum(f.currentMarketValue)}\n  累计买入：¥${fmtNum(f.totalBuyAmount)} | 累计卖出：¥${fmtNum(f.totalSellAmount)}`
+      if (f.totalDividend > 0) ctx += ` | 累计分红：¥${fmtNum(f.totalDividend)}`
+      ctx += `\n  持有份额：${fmtNum(f.totalShares || 0)} 份 | 当前收益率：${fmtSigned(f.currentReturnRate)}% | 持有：${daysBetween(f.buyDate)}天 | 买入日期：${f.buyDate}\n`
       if (f.maxInvestment > 0) ctx += `  投入上限：¥${fmtNum(f.maxInvestment)}\n`
       if (f.addTiers?.length) ctx += `  加仓档位：${f.addTiers.map(t => t.line + '%→买' + t.ratio + '%').join(' | ')}\n`
       if (f.strategyType === 'pullback' && f.pullbackTiers?.length) ctx += `  回调加仓档位：${f.pullbackTiers.map(t => t.line + '%→买' + t.ratio + '%').join(' | ')}\n`
@@ -274,7 +277,7 @@ export const useFundStore = defineStore('fund', () => {
 
   return {
     funds, history, dailySnapshots, loading,
-    totalPrincipal, totalMarketValue, totalBuy, totalSell, totalReturnRate,
+    totalPrincipal, totalMarketValue, totalBuy, totalSell, totalDividend, totalReturnRate,
     _fundsLoaded, _snapshotsLoaded, _historyLoaded, resetFlags,
     loadForTab, refreshForTab, loadAll,
     refreshFunds, createFund, updateFund, removeFund,

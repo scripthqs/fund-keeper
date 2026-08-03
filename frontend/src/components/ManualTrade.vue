@@ -47,14 +47,18 @@
         <div class="grid grid-cols-2 gap-x-4 gap-y-1">
           <span>💰 市值：<strong>¥{{ fmtNum(selectedFund.currentMarketValue) }}</strong></span>
           <span>📊 收益率：<strong :class="selectedFund.currentReturnRate >= 0 ? 'text-red-600' : 'text-green-600'">{{ fmtSigned(selectedFund.currentReturnRate) }}%</strong></span>
-          <span>📦 持有份额：<strong>{{ fmtNum(selectedFund.totalShares || 0) }} 份</strong></span>
+          <span>📦 持有份额：<strong>{{ (selectedFund.totalShares || 0).toFixed(4) }} 份</strong></span>
           <span>📈 累计买入：<strong>¥{{ fmtNum(selectedFund.totalBuyAmount) }}</strong></span>
-          <span v-if="selectedFund.yesterdayNav > 0">📅 昨日净值：<strong>{{ selectedFund.yesterdayNav.toFixed(4) }}</strong></span>
+          <span v-if="selectedFund.yesterdayNav > 0">📅 最新净值：<strong>{{ selectedFund.yesterdayNav.toFixed(4) }}</strong></span>
           <span>📉 累计卖出：<strong>¥{{ fmtNum(selectedFund.totalSellAmount) }}</strong></span>
+          <span v-if="selectedFund.totalDividend > 0">💵 累计分红：<strong>¥{{ fmtNum(selectedFund.totalDividend) }}</strong></span>
+          <span v-if="!selectedFund.sharesVerified" class="col-span-2" style="color: #f59e0b;">
+            ⚠️ 份额数据由历史市值反推，未经过实际交易验证，仅供参考
+          </span>
         </div>
         <!-- 基金交易规则提示 -->
         <div class="mt-2 pt-2 text-xs" style="color: var(--text-tertiary); border-top: 1px solid var(--border-color);">
-          ℹ️ {{ actionType === '买入' ? '买入按金额申请，成交净值需等当日收盘后公布（约22:00），届时自动纠正份额。' : '卖出按份额申请，到账金额 = 份额 × 成交净值 - 赎回费，净值以当晚结算价为准。' }}
+          ℹ️ {{ actionType === '买入' ? '买入按金额申请，成交净值需等当日收盘后公布（约22:00），届时自动纠正份额。' : '卖出按份额申请，到账金额 = 份额 × 成交净值 - 赎回费，净值以当晚结算价为准（22:00自动纠正）。' }}
         </div>
       </div>
 

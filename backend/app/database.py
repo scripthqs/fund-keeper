@@ -47,7 +47,10 @@ def init_db():
             stop_profit_ratio REAL DEFAULT 0,
             stop_loss_ratio REAL DEFAULT 0,
             created_at TEXT DEFAULT '',
-            user_id TEXT DEFAULT ''
+            user_id TEXT DEFAULT '',
+            shares_verified INTEGER DEFAULT 0,
+            version INTEGER DEFAULT 0,
+            total_dividend REAL DEFAULT 0
         )
     """)
 
@@ -166,6 +169,21 @@ def migrate_db():
     # history 表新增 nav_at_action（买入/卖出时的净值）
     try:
         cursor.execute("ALTER TABLE history ADD COLUMN nav_at_action REAL DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    # funds 表新增 shares_verified（份额是否经过实际交易验证，反推的为0）
+    try:
+        cursor.execute("ALTER TABLE funds ADD COLUMN shares_verified INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    # funds 表新增 version（乐观锁版本号，每次 UPDATE 自增）
+    try:
+        cursor.execute("ALTER TABLE funds ADD COLUMN version INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+    # funds 表新增 total_dividend（累计现金分红，用于除权补偿）
+    try:
+        cursor.execute("ALTER TABLE funds ADD COLUMN total_dividend REAL DEFAULT 0")
     except sqlite3.OperationalError:
         pass
     conn.commit()

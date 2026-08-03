@@ -294,7 +294,7 @@ onUnmounted(() => { clearInterval(timer); clearInterval(holidayTimer) })
   padding: 40px 0;
 }
 .loading-text {
-  margin-top: 8px;
+  margin-top: 8x;
   font-size: 0.85rem;
   color: var(--text-secondary);
 }

@@ -223,6 +223,7 @@ async def query_fund_by_code(code: str) -> dict:
 
     nav = 0.0
     date = ""
+    accumulated_nav = 0.0
     update_time = ""
 
     # 获取历史净值（最近已结算净值）
@@ -230,9 +231,10 @@ async def query_fund_by_code(code: str) -> dict:
         history = await get_fund_nav_history(code, page_size=1)
         if history and len(history) > 0:
             nav = history[0]["nav"]
+            accumulated_nav = history[0].get("accumulated_nav", 0) or 0
             date = history[0]["date"]
             update_time = date
-            logger.info("基金 %s 历史净值: nav=%s date=%s", code, nav, date)
+            logger.info("基金 %s 历史净值: nav=%s acc_nav=%s date=%s", code, nav, accumulated_nav, date)
     except Exception as e:
         _log_network_error("历史净值(query_fund)", code, e)
 
@@ -252,6 +254,7 @@ async def query_fund_by_code(code: str) -> dict:
         "name": name,
         "date": date,
         "nav": nav,
+        "accumulated_nav": accumulated_nav,
         "estimated_nav": estimated_nav,
         "estimated_change": estimated_change,
         "estimate_suspended": False,

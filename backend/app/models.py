@@ -24,6 +24,8 @@ class FundBase(BaseModel):
     current_market_value: float = Field(0, alias="currentMarketValue")
     current_return_rate: float = Field(0, alias="currentReturnRate")
     total_shares: float = Field(0, alias="totalShares")
+    total_dividend: float = Field(0, alias="totalDividend")
+    shares_verified: int = Field(0, alias="sharesVerified")
     max_investment: float = Field(0, alias="maxInvestment")
     add_tiers: List[AddTier] = Field(default_factory=list, alias="addTiers")
     strategy_type: str = Field("downside", alias="strategyType")  # "downside" 越跌越买 | "pullback" 上涨回调加仓

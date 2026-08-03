@@ -587,13 +587,14 @@ const pullbackTierKey = computed(() =>
   (form.value.pullbackTiers || []).map((t) => t.line + "," + t.ratio).join("|"),
 );
 
-/** 自动计算总收益率 = (市值 - 累计买入 + 累计卖出) ÷ 累计买入 × 100 */
+/** 自动计算总收益率 = (市值 - 累计买入 + 累计卖出 + 累计分红) ÷ 累计买入 × 100 */
 const autoReturnRate = computed(() => {
   const f = form.value;
   if (!f.totalBuyAmount || f.totalBuyAmount <= 0) return null;
   const profit = B(f.currentMarketValue || 0)
     .minus(f.totalBuyAmount)
-    .plus(f.totalSellAmount || 0);
+    .plus(f.totalSellAmount || 0)
+    .plus(f.totalDividend || 0);
   return round(profit.div(f.totalBuyAmount).times(100));
 });
 
@@ -982,10 +983,12 @@ async function save() {
       totalBuyAmount:
         cleanNumeric(raw.totalBuyAmount) || cleanNumeric(raw.initialPrincipal),
       totalSellAmount: cleanNumeric(raw.totalSellAmount),
+      totalDividend: cleanNumeric(raw.totalDividend),
       currentMarketValue:
         cleanNumeric(raw.currentMarketValue) ||
         cleanNumeric(raw.initialPrincipal),
       currentReturnRate: 0,
+      totalShares: cleanNumeric(raw.totalShares),
       maxInvestment: cleanNumeric(raw.maxInvestment),
       addTiers: validTiers,
       strategyType: raw.strategyType || "downside",
@@ -995,10 +998,11 @@ async function save() {
       stopProfitRatio: cleanNumeric(raw.stopProfitRatio),
       stopLossRatio: cleanNumeric(raw.stopLossRatio),
     };
-    // 自动计算总收益率
+    // 自动计算总收益率（含分红补偿）
     const profit = B(data.currentMarketValue || 0)
       .minus(data.totalBuyAmount)
-      .plus(data.totalSellAmount || 0);
+      .plus(data.totalSellAmount || 0)
+      .plus(data.totalDividend || 0);
     data.currentReturnRate =
       data.totalBuyAmount > 0
         ? round(profit.div(data.totalBuyAmount).times(100))

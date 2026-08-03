@@ -215,6 +215,14 @@ export function calcRecoveryNeeded(totalReturn) {
   return round(B(lossRate).div(B(1).minus(lossRate)).times(100), 4)
 }
 
+/** 计算含分红补偿的收益率（与后端公式一致） */
+export function calcReturnRate(fund) {
+  const buy = fund.totalBuyAmount || 0
+  if (buy <= 0) return 0
+  const dividend = fund.totalDividend || 0
+  return round(B(fund.currentMarketValue || 0).minus(buy).plus(fund.totalSellAmount || 0).plus(dividend).div(buy).times(100), 4)
+}
+
 /** 盈亏归零预警 */
 export function evaluateWarning(fund, todayChange, totalReturn, config, snapshots) {
   const { safetyCushion } = calcSafetyCushion(fund, todayChange)

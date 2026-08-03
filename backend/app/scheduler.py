@@ -1,18 +1,28 @@
 """
 定时任务调度模块（纯 asyncio 实现，无需第三方依赖）
 每天晚间自动更新所有用户的基金当日收益、净值、快照
+
+每日 22:00 执行（此时绝大多数基金已公布结算净值）。
+核心职责：
+1. 用已结算净值 × 份额精确计算当日市值与收益
+2. 纠正当日买入/卖出的估算份额/金额（T 日交易时段用估算净值，22:00 用实际净值纠正）
+3. 检测基金分红除权事件，自动补偿分红金额
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Optional
 
 from app.database import get_db, gen_id, now_str
-from app.fund_api import query_fund_by_code, FundQueryError
+from app.fund_api import query_fund_by_code, get_fund_nav_history, FundQueryError
 
 logger = logging.getLogger(__name__)
+
+# 份额精度：6 位小数，减少多次买卖后的累积误差
+SHARE_PRECISION = 6
 
 # 北京时间 = UTC+8，每天晚上 22:00 执行（此时绝大多数基金已公布结算净值）
 SCHEDULE_HOUR = 22
@@ -37,6 +47,8 @@ async def _update_single_fund(fund: dict, user_id: str, beijing_today: str) -> d
     total_sell = fund.get("total_sell_amount", 0)
     total_shares = fund.get("total_shares", 0) or 0
     yesterday_nav = fund.get("yesterday_nav", 0) or 0
+    shares_verified = fund.get("shares_verified", 0)
+    total_dividend = fund.get("total_dividend", 0) or 0
 
     try:
         info = await query_fund_by_code(code)
@@ -50,6 +62,7 @@ async def _update_single_fund(fund: dict, user_id: str, beijing_today: str) -> d
     # 只使用已结算净值（东方财富），不使用实时估值
     settled_nav = info.get("nav", 0)
     settled_nav_date = info.get("date", "")
+    accumulated_nav = info.get("accumulated_nav", 0) or 0
 
     # 当日结算净值未公布时跳过
     if settled_nav_date < beijing_today or settled_nav <= 0:
@@ -59,11 +72,41 @@ async def _update_single_fund(fund: dict, user_id: str, beijing_today: str) -> d
         )
         return None
 
-    # 旧数据初始化：份额为0时用当前市值反推（一次性）
+    # ==================== 分红除权检测与补偿 ====================
+    # 当单位净值下跌但累计净值未同步下跌（或下跌幅度明显不同），说明发生了分红除权。
+    # 此时应把分红金额加入 total_dividend，避免系统误判为亏损。
+    if yesterday_nav > 0 and accumulated_nav > 0 and settled_nav < yesterday_nav:
+        unit_drop_pct = (yesterday_nav - settled_nav) / yesterday_nav
+        # 累计净值变化（需要查昨日累计净值，用历史接口回溯）
+        try:
+            prev_history = await get_fund_nav_history(code, page_size=1)
+            prev_acc_nav = prev_history[0].get("accumulated_nav", 0) if prev_history else 0
+            if prev_acc_nav > 0:
+                acc_drop_pct = (prev_acc_nav - accumulated_nav) / prev_acc_nav if prev_acc_nav > accumulated_nav else 0
+                # 单位净值跌了，但累计净值没跌（或跌幅远小于单位净值）→ 分红除权
+                if unit_drop_pct > 0.005 and acc_drop_pct < unit_drop_pct * 0.3:
+                    dividend_per_share = round(yesterday_nav - settled_nav, SHARE_PRECISION)
+                    dividend_amount = round(total_shares * dividend_per_share, 2)
+                    if dividend_amount > 0.01:
+                        total_dividend = round(total_dividend + dividend_amount, 2)
+                        logger.info(
+                            "定时更新 - 检测到分红除权: %s (%s) 单位净值 %.4f→%.4f (跌%.2f%%)，"
+                            "累计净值跌%.2f%%，分红约 ¥%.2f (%.4f/份 × %.4f份)，"
+                            "累计分红已更新为 ¥%.2f",
+                            fund_id, fund_name, yesterday_nav, settled_nav,
+                            unit_drop_pct * 100, acc_drop_pct * 100,
+                            dividend_amount, dividend_per_share, total_shares, total_dividend,
+                        )
+        except Exception as e:
+            logger.warning("定时更新 - 分红检测异常 %s: %s", fund_id, e)
+
+    # ==================== 旧数据初始化 ====================
+    # 份额为0时用当前市值反推（一次性），标记为未验证
     if total_shares <= 0 and old_market_value > 0:
-        total_shares = round(old_market_value / settled_nav, 4)
+        total_shares = round(old_market_value / settled_nav, SHARE_PRECISION)
+        shares_verified = 0  # 反推的份额标记为未验证
         logger.info(
-            "定时更新 - 旧数据初始化: 基金 %s (%s) 份额=%.4f（市值%.2f / NAV %.4f）",
+            "定时更新 - 旧数据初始化: 基金 %s (%s) 份额=%.6f（市值%.2f / NAV %.4f）",
             fund_id, fund_name, total_shares, old_market_value, settled_nav,
         )
 
@@ -71,35 +114,90 @@ async def _update_single_fund(fund: dict, user_id: str, beijing_today: str) -> d
         logger.warning("定时更新 - 基金 %s (%s) 份额为0，无法计算市值，跳过", fund_id, fund_name)
         return None
 
-    # 检查今日是否有买入记录，若买入时用的是估算净值（nav_at_action ≠ 今日结算净值），
-    # 则用今日结算净值纠正份额，确保每笔买入的份额精确
+    # ==================== 纠正今日买入/卖出估算误差 ====================
     conn_check = get_db()
     try:
+        # --- 买入纠正：用今日结算净值纠正买入份额 ---
         today_buys = conn_check.execute(
-            "SELECT amount, nav_at_action FROM history WHERE fund_name=? AND date=? AND type='买入' AND user_id=?",
+            "SELECT id, amount, nav_at_action FROM history WHERE fund_name=? AND date=? AND type='买入' AND user_id=?",
             (fund_name, beijing_today, user_id),
         ).fetchall()
         for buy in today_buys:
             buy_amount = buy["amount"] or 0
             estimated_nav = buy["nav_at_action"] or 0
             if estimated_nav > 0 and buy_amount > 0 and abs(estimated_nav - settled_nav) > 0.0001:
-                estimated_shares = round(buy_amount / estimated_nav, 4)
-                correct_shares = round(buy_amount / settled_nav, 4)
-                correction = round(correct_shares - estimated_shares, 4)
+                estimated_shares = round(buy_amount / estimated_nav, SHARE_PRECISION)
+                correct_shares = round(buy_amount / settled_nav, SHARE_PRECISION)
+                correction = round(correct_shares - estimated_shares, SHARE_PRECISION)
                 if abs(correction) > 0:
-                    total_shares = round(total_shares + correction, 4)
+                    total_shares = round(total_shares + correction, SHARE_PRECISION)
                     logger.info(
                         "定时更新 - 纠正 %s 今日买入份额: 估算NAV %.4f→实际NAV %.4f, "
-                        "份额 %.4f→%.4f (调整%+.4f)",
+                        "份额 %.6f→%.6f (调整%+.6f)",
                         fund_name, estimated_nav, settled_nav,
                         estimated_shares, correct_shares, correction,
                     )
+
+        # --- 卖出纠正：用今日结算净值纠正卖出到账金额 ---
+        today_sells = conn_check.execute(
+            "SELECT id, amount, nav_at_action, note FROM history WHERE fund_name=? AND date=? AND type='卖出' AND user_id=?",
+            (fund_name, beijing_today, user_id),
+        ).fetchall()
+        for sell in today_sells:
+            estimated_nav = sell["nav_at_action"] or 0
+            if estimated_nav <= 0 or abs(estimated_nav - settled_nav) <= 0.0001:
+                continue
+
+            # 从 note 中解析卖出份额和赎回费
+            # note 格式: "{reason} | {shares}份 @NAV{nav} → ¥{amount} - 费{fee}"
+            # 或: "{reason} | {shares}份 @NAV{nav} → ¥{amount}"
+            sell_shares = 0.0
+            redemption_fee = 0.0
+            note = sell.get("note") or ""
+            shares_match = re.search(r'([\d.]+)份\s*@', note)
+            fee_match = re.search(r'费\s*([\d.]+)', note)
+            if shares_match:
+                try:
+                    sell_shares = float(shares_match.group(1))
+                except (ValueError, TypeError):
+                    sell_shares = 0.0
+            if fee_match:
+                try:
+                    redemption_fee = float(fee_match.group(1))
+                except (ValueError, TypeError):
+                    redemption_fee = 0.0
+
+            if sell_shares <= 0:
+                logger.warning("定时更新 - 卖出纠正: 无法从note解析卖出份额 %s, note=%s", fund_name, note[:100])
+                continue
+
+            # 用实际结算净值重新计算到账金额
+            estimated_amount = round(sell_shares * estimated_nav, 2)
+            correct_amount = round(sell_shares * settled_nav, 2)
+            correct_proceeds = max(0, round(correct_amount - redemption_fee, 2))
+            old_proceeds = sell["amount"] or 0
+            sell_correction = round(correct_proceeds - old_proceeds, 2)
+
+            if abs(sell_correction) >= 0.01:
+                total_sell = round(total_sell + sell_correction, 2)
+                logger.info(
+                    "定时更新 - 纠正 %s 今日卖出到账: 估算NAV %.4f→实际NAV %.4f, "
+                    "份额 %.6f, 到账金额 ¥%.2f→¥%.2f (调整%+.2f)",
+                    fund_name, estimated_nav, settled_nav,
+                    sell_shares, old_proceeds, correct_proceeds, sell_correction,
+                )
+                # 更新 history 记录中的到账金额
+                conn_check.execute(
+                    "UPDATE history SET amount=? WHERE id=?",
+                    (correct_proceeds, sell["id"]),
+                )
     except Exception as e:
-        logger.warning("定时更新 - 查询今日买入记录失败 %s: %s", fund_id, e)
+        logger.warning("定时更新 - 查询/纠正今日交易记录失败 %s: %s", fund_id, e)
     finally:
+        conn_check.commit()
         conn_check.close()
 
-    # 核心公式：市值 = 份额 × 净值，收益 = 份额 × (今日净值 - 昨日净值)
+    # ==================== 核心公式：市值 = 份额 × 净值 ====================
     new_market_value = round(total_shares * settled_nav, 2)
 
     if yesterday_nav > 0:
@@ -114,16 +212,16 @@ async def _update_single_fund(fund: dict, user_id: str, beijing_today: str) -> d
     # 确保市值不为负
     new_market_value = max(0, new_market_value)
 
-    # 计算新的收益率
+    # 计算新的收益率（含分红补偿）
     if total_buy > 0:
         new_return_rate = round(
-            (new_market_value - total_buy + total_sell) / total_buy * 100, 2
+            (new_market_value - total_buy + total_sell + total_dividend) / total_buy * 100, 2
         )
     else:
         new_return_rate = old_return_rate
 
     logger.info(
-        "定时更新 - %s (%s): 份额=%.4f 今日NAV=%s 昨日NAV=%s 涨跌=%s%% 市值 %s→%s 收益=%s 收益率 %s→%s%%",
+        "定时更新 - %s (%s): 份额=%.6f 今日NAV=%s 昨日NAV=%s 涨跌=%s%% 市值 %s→%s 收益=%s 收益率 %s→%s%%",
         fund_id, fund_name, total_shares,
         settled_nav, yesterday_nav,
         f"{today_change:+.2f}" if today_change is not None else "N/A",
@@ -132,16 +230,20 @@ async def _update_single_fund(fund: dict, user_id: str, beijing_today: str) -> d
         old_return_rate, new_return_rate,
     )
 
-    # 写入数据库（包含份额和昨日净值以便下次计算）
+    # ==================== 写入数据库 ====================
     conn = get_db()
     try:
+        # 版本号乐观锁：version 自增，防止并发覆盖
+        old_version = fund.get("version", 0)
         conn.execute(
             """UPDATE funds SET
                current_market_value=?, current_return_rate=?, last_nav_update=?,
-               total_shares=?, yesterday_nav=?
+               total_shares=?, yesterday_nav=?, shares_verified=?,
+               total_dividend=?, version=version+1
                WHERE id=? AND user_id=?""",
             (new_market_value, new_return_rate, now_str(),
-             total_shares, settled_nav, fund_id, user_id),
+             total_shares, settled_nav, shares_verified,
+             total_dividend, fund_id, user_id),
         )
 
         # 保存每日快照（同一天覆盖更新）
@@ -173,6 +275,10 @@ async def _update_single_fund(fund: dict, user_id: str, beijing_today: str) -> d
             )
 
         # 写入操作历史（自动更新记录）
+        if total_dividend > 0 and fund.get("total_dividend", 0) != total_dividend:
+            dividend_note = f"分红除权补偿: 累计分红 ¥{total_dividend}"
+        else:
+            dividend_note = ""
         if today_change is not None:
             profit_note = (
                 f"今日收益 {today_profit:+.2f} 元（NAV {yesterday_nav}→{settled_nav}，"
@@ -180,6 +286,8 @@ async def _update_single_fund(fund: dict, user_id: str, beijing_today: str) -> d
             )
         else:
             profit_note = f"基线建立：NAV={settled_nav}，份额={total_shares:.2f}"
+        if dividend_note:
+            profit_note += " | " + dividend_note
         conn.execute(
             """INSERT INTO history
                (id, date, fund_name, type, amount, return_rate, note, created_at, user_id)
