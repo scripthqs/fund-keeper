@@ -8,7 +8,7 @@
     <header v-show="activeTab === 'chat' || activeTab === 'holdings'" class="app-header">
       <div>
         <h1 class="app-title">
-          📊 理财小助理
+          📊 决策辅助工具
         </h1>
         <p class="app-subtitle">{{ currentTime }}</p>
         <p class="app-badge">
